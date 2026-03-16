@@ -1,0 +1,53 @@
+name:
+  type: string
+  description: Name (non-unique) of the host
+
+uri:
+  type: uri
+  unique: true
+  id: true
+  description: |
+    Unique address of the host. Could be IP or
+    any other fully resolved name on the network
+
+ports:
+  type: custom
+  arity: 1..*
+  description: Host's port configuration
+  schema:
+    role:
+      type: string
+    number:
+      type: integer
+    direction:
+      type: string
+      choice: ["in", "out", "both"]
+    type:
+      type: string
+      choice: ["tcp", "udp"]
+
+storage:
+  type: custom
+  arity: 1..*
+  description: Storage locations on the host
+  schema:
+    role:
+      type: string
+    location:
+      type: uri
+    permissions:
+      type: string
+      choice: ["r", "rm", "w", "wm", "rw", "rwm"]
+
+limits:
+  type: custom
+  arity: 1..*
+  description: Resource limits on the host
+  schema:
+    role:
+      type: string
+      choice: ["cpu", "gpu", "ram", "vram"]
+    percent:
+      type: float
+      description: Percentage between 0 and 1
+    
