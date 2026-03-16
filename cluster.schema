@@ -1,0 +1,24 @@
+name:
+  type: string
+  unique: true
+  id: true
+  description: Unique name for the cluster
+
+hosts:
+  type: custom
+  arity: 1..*
+  description: Hosts composing the cluster
+  schema: host.schema
+
+features:
+  type: custom
+  arity: 1..*
+  description: Cluster features to activate
+  schema: feature.schema
+
+config:
+  type: filesystem
+  arity: 1..*
+  description: Configuration locations
+
+  
