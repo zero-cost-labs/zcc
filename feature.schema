@@ -1,0 +1,36 @@
+name:
+  type: string
+  unique: true
+  id: true
+
+labels:
+  type: string
+  arity: 1..*
+  description: |
+    Label(s) used to tag host(s) onto which to
+    install said feature
+
+locations:
+  type: uri
+  arity: 1..*
+  description: |
+    Filepaths containing necessary installation
+    scripts and configurations for deployment
+
+install-cmds:
+  type: bash
+  arity: 1..*
+  description: |
+    List of installation commands. Runs
+    sequentially. All filepaths defined under
+    `locations` are mounted in the execution
+    directory throughout deployment only
+
+init-cmds:
+  type: bash
+  arity: 1..*
+  description: |
+    List of initialization commands, executed
+    once, needed to execute the feature at
+    runtime
+  
