@@ -10,9 +10,53 @@ uri:
     Unique address of the host. Could be IP or
     any other fully resolved name on the network
 
+roles:
+  type: string
+  arity: 1..*
+  choice: ["controller", "worker", "sole"]
+  description: |
+    Role(s) this node plays in the cluster.
+    - controller: manages the Kubernetes control plane (k0s controller)
+    - worker:     runs workloads (k0s worker)
+    - sole:       both controller and worker on a single node
+
+labels:
+  type: string
+  arity: 0..*
+  description: |
+    Arbitrary labels used to target this host for
+    feature deployment. Features select hosts by
+    matching one or more of these labels.
+
+ssh:
+  type: custom
+  arity: 1
+  description: SSH connection parameters for this host
+  schema:
+    user:
+      type: string
+      default: root
+      description: SSH username
+    port:
+      type: integer
+      default: 22
+      description: SSH port
+    key:
+      type: filesystem
+      description: Path to the SSH private key file
+    password:
+      type: string
+      description: SSH password (prefer key-based auth)
+    known_hosts_file:
+      type: filesystem
+      description: |
+        Path to a known_hosts file used to verify the host's SSH key.
+        Defaults to ~/.ssh/known_hosts. Set to empty string to use only
+        the system-level known_hosts without loading the user file.
+
 ports:
   type: custom
-  arity: 1..*
+  arity: 0..*
   description: Host's port configuration
   schema:
     role:
@@ -28,7 +72,7 @@ ports:
 
 storage:
   type: custom
-  arity: 1..*
+  arity: 0..*
   description: Storage locations on the host
   schema:
     role:
@@ -41,7 +85,7 @@ storage:
 
 limits:
   type: custom
-  arity: 1..*
+  arity: 0..*
   description: Resource limits on the host
   schema:
     role:
@@ -50,4 +94,5 @@ limits:
     percent:
       type: float
       description: Percentage between 0 and 1
+
     

@@ -1,0 +1,17 @@
+Metadata-Version: 2.4
+Name: zcc
+Version: 0.1.0
+Summary: Zero Cost Cluster — Kubernetes cluster management powered by k0s
+License: MIT
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: click>=8.0
+Requires-Dist: pydantic>=2.0
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: paramiko>=3.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+Requires-Dist: pytest-mock>=3.0; extra == "dev"
+
+# zcc
+Zero Cost Cluster

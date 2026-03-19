@@ -5,21 +5,33 @@ name:
 
 labels:
   type: string
-  arity: 1..*
+  arity: 0..*
   description: |
-    Label(s) used to tag host(s) onto which to
-    install said feature
+    Label(s) used to select host(s) onto which to
+    install this feature. A host matches when it
+    carries at least one of these labels.
+
+roles:
+  type: string
+  arity: 0..*
+  choice: ["controller", "worker", "sole"]
+  description: |
+    Role(s) used to select host(s) onto which to
+    install this feature. A host matches when it
+    has at least one of these roles.
+    Either `labels` or `roles` (or both) must be
+    provided for the feature to be deployed anywhere.
 
 locations:
   type: uri
-  arity: 1..*
+  arity: 0..*
   description: |
     Filepaths containing necessary installation
     scripts and configurations for deployment
 
 install-cmds:
   type: bash
-  arity: 1..*
+  arity: 0..*
   description: |
     List of installation commands. Runs
     sequentially. All filepaths defined under
@@ -28,9 +40,10 @@ install-cmds:
 
 init-cmds:
   type: bash
-  arity: 1..*
+  arity: 0..*
   description: |
     List of initialization commands, executed
     once, needed to execute the feature at
     runtime
+
   

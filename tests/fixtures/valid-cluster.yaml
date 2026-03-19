@@ -1,0 +1,43 @@
+name: valid-cluster
+version: v1
+
+hosts:
+  - name: ctrl
+    uri: 10.0.0.1
+    roles: [controller]
+    labels: [primary]
+    ssh:
+      user: ubuntu
+      key: /home/user/.ssh/id_rsa
+
+  - name: worker-a
+    uri: 10.0.0.2
+    roles: [worker]
+    labels: [compute]
+    ssh:
+      user: ubuntu
+
+  - name: worker-b
+    uri: 10.0.0.3
+    roles: [worker]
+    labels: [compute, storage]
+    ssh:
+      user: ubuntu
+    storage:
+      - role: data
+        location: /data
+        permissions: rw
+    limits:
+      - role: cpu
+        percent: 0.8
+
+features:
+  - name: monitoring
+    labels: [primary, compute]
+    install-cmds:
+      - echo "install monitoring"
+
+  - name: storage-backend
+    labels: [storage]
+    install-cmds:
+      - echo "install storage"

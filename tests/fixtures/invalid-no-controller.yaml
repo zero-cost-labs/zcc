@@ -1,0 +1,10 @@
+# All hosts are workers — no controller. Should fail cluster validation.
+name: no-controller-cluster
+version: v1
+
+hosts:
+  - name: worker-only
+    uri: 10.0.0.1
+    roles: [worker]
+    ssh:
+      user: root
