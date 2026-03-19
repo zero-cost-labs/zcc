@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field, field_validator
 
 from .feature import Feature
-from .host import Host, HostRole
+from .host import Host
 
 
 class Cluster(BaseModel):
@@ -23,14 +23,13 @@ class Cluster(BaseModel):
     @field_validator("hosts")
     @classmethod
     def validate_hosts(cls, hosts: list[Host]) -> list[Host]:
-        # At least one node must act as a control-plane member.
-        control_roles = {HostRole.CONTROLLER, HostRole.SOLE}
+        # At least one node must carry a control-plane label.
         has_controller = any(
-            bool(set(h.roles) & control_roles) for h in hosts
+            h.has_label("controller", "sole") for h in hosts
         )
         if not has_controller:
             raise ValueError(
-                "Cluster must have at least one host with role 'controller' or 'sole'"
+                "Cluster must have at least one host labelled 'controller' or 'sole'"
             )
 
         # Host URIs must be unique (they are the identity field).

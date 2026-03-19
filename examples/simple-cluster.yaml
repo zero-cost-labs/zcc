@@ -10,8 +10,7 @@ version: v1
 hosts:
   - name: controller-1
     uri: 192.168.1.10
-    roles: [controller]
-    labels: [primary]
+    labels: [controller, primary]
     ssh:
       user: ubuntu
       port: 22
@@ -19,8 +18,7 @@ hosts:
 
   - name: worker-1
     uri: 192.168.1.11
-    roles: [worker]
-    labels: [compute, storage]
+    labels: [worker, compute, storage]
     ssh:
       user: ubuntu
       key: ~/.ssh/id_rsa
@@ -36,8 +34,7 @@ hosts:
 
   - name: worker-2
     uri: 192.168.1.12
-    roles: [worker]
-    labels: [compute]
+    labels: [worker, compute]
     ssh:
       user: ubuntu
       key: ~/.ssh/id_rsa

@@ -10,23 +10,29 @@ uri:
     Unique address of the host. Could be IP or
     any other fully resolved name on the network
 
-roles:
-  type: string
-  arity: 1..*
-  choice: ["controller", "worker", "sole"]
-  description: |
-    Role(s) this node plays in the cluster.
-    - controller: manages the Kubernetes control plane (k0s controller)
-    - worker:     runs workloads (k0s worker)
-    - sole:       both controller and worker on a single node
-
 labels:
   type: string
-  arity: 0..*
+  arity: 1..*
   description: |
-    Arbitrary labels used to target this host for
-    feature deployment. Features select hosts by
-    matching one or more of these labels.
+    Labels that describe this host's roles and capabilities.
+
+    Reserved labels — understood by the framework and used to
+    configure the underlying k0s installation:
+
+      controller  Runs the Kubernetes control plane (k0s controller)
+      worker      Runs workloads / Pods (k0s worker)
+      sole        Runs both the control plane and workloads on a
+                  single node (k0s controller --single)
+
+    Every host must carry at least one reserved label so that the
+    framework knows how to install k0s on it.  Additional,
+    user-defined labels can be combined freely for fine-grained
+    feature targeting.
+
+    Examples:
+      labels: [controller]
+      labels: [worker, compute, gpu]
+      labels: [sole, dev]
 
 ssh:
   type: custom
@@ -94,5 +100,6 @@ limits:
     percent:
       type: float
       description: Percentage between 0 and 1
+
 
     

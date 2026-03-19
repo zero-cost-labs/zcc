@@ -7,13 +7,11 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-
-class HostRole(str, Enum):
-    """Role a node plays within the cluster."""
-
-    CONTROLLER = "controller"
-    WORKER = "worker"
-    SOLE = "sole"  # controller + worker on a single node
+# ---------------------------------------------------------------------------
+# Reserved labels understood by the framework.
+# A host must carry at least one of these so zcc knows how to install k0s.
+# ---------------------------------------------------------------------------
+RESERVED_LABELS = frozenset({"controller", "worker", "sole"})
 
 
 class PortDirection(str, Enum):
@@ -76,10 +74,12 @@ class Host(BaseModel):
 
     name: str
     uri: str  # unique identifier — IP or resolvable hostname
-    roles: list[HostRole] = Field(min_length=1)
-    labels: list[str] = []
+    labels: list[str] = Field(min_length=1)
     ssh: SSHConfig = Field(default_factory=SSHConfig)
     ports: list[PortConfig] = []
     storage: list[StorageConfig] = []
     limits: list[LimitConfig] = []
 
+    def has_label(self, *labels: str) -> bool:
+        """Return True when the host carries at least one of *labels*."""
+        return bool(set(self.labels) & set(labels))

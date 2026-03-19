@@ -7,14 +7,13 @@ version: v1
 hosts:
   - name: sole-1
     uri: 10.0.0.1
-    roles: [sole]
-    labels: [all]
+    labels: [sole]
     ssh:
       user: root
       key: ~/.ssh/id_rsa
 
 features:
   - name: core-addons
-    roles: [sole]
+    labels: [sole]
     install-cmds:
       - kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.7.0/aio/deploy/recommended.yaml

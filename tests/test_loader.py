@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from zcc.loader import ConfigError, load_cluster
-from zcc.models.host import HostRole
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -20,18 +19,18 @@ class TestLoadCluster:
         assert len(cluster.hosts) == 3
         assert len(cluster.features) == 2
 
-    def test_valid_cluster_host_roles(self):
+    def test_valid_cluster_host_labels(self):
         cluster = load_cluster(FIXTURES / "valid-cluster.yaml")
         ctrl = next(h for h in cluster.hosts if h.name == "ctrl")
-        assert HostRole.CONTROLLER in ctrl.roles
+        assert "controller" in ctrl.labels
         assert "primary" in ctrl.labels
 
     def test_valid_cluster_feature_targets(self):
         cluster = load_cluster(FIXTURES / "valid-cluster.yaml")
         monitoring = next(f for f in cluster.features if f.name == "monitoring")
-        assert "primary" in monitoring.labels or "compute" in monitoring.labels
+        assert bool({"primary", "compute"} & set(monitoring.labels))
 
-    def test_invalid_no_roles(self):
+    def test_invalid_no_labels(self):
         with pytest.raises(ConfigError):
             load_cluster(FIXTURES / "invalid-no-roles.yaml")
 
@@ -59,14 +58,14 @@ class TestLoadCluster:
         cluster = load_cluster(str(FIXTURES / "valid-cluster.yaml"))
         assert cluster.name == "valid-cluster"
 
-    def test_sole_node_example(self, tmp_path):
+    def test_sole_label_example(self, tmp_path):
         cfg = tmp_path / "sole.yaml"
         cfg.write_text(
             "name: sole\n"
             "hosts:\n"
             "  - name: node\n"
             "    uri: 10.0.0.1\n"
-            "    roles: [sole]\n"
+            "    labels: [sole]\n"
         )
         cluster = load_cluster(cfg)
-        assert HostRole.SOLE in cluster.hosts[0].roles
+        assert "sole" in cluster.hosts[0].labels

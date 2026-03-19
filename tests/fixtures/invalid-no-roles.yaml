@@ -1,4 +1,4 @@
-# Missing 'roles' on the host — should fail validation.
+# Missing labels entirely — should fail validation.
 name: broken-cluster
 version: v1
 

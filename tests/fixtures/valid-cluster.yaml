@@ -4,23 +4,20 @@ version: v1
 hosts:
   - name: ctrl
     uri: 10.0.0.1
-    roles: [controller]
-    labels: [primary]
+    labels: [controller, primary]
     ssh:
       user: ubuntu
       key: /home/user/.ssh/id_rsa
 
   - name: worker-a
     uri: 10.0.0.2
-    roles: [worker]
-    labels: [compute]
+    labels: [worker, compute]
     ssh:
       user: ubuntu
 
   - name: worker-b
     uri: 10.0.0.3
-    roles: [worker]
-    labels: [compute, storage]
+    labels: [worker, compute, storage]
     ssh:
       user: ubuntu
     storage:

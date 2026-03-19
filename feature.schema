@@ -5,22 +5,15 @@ name:
 
 labels:
   type: string
-  arity: 0..*
+  arity: 1..*
   description: |
-    Label(s) used to select host(s) onto which to
-    install this feature. A host matches when it
-    carries at least one of these labels.
+    Label(s) used to select the host(s) onto which to
+    install this feature.
 
-roles:
-  type: string
-  arity: 0..*
-  choice: ["controller", "worker", "sole"]
-  description: |
-    Role(s) used to select host(s) onto which to
-    install this feature. A host matches when it
-    has at least one of these roles.
-    Either `labels` or `roles` (or both) must be
-    provided for the feature to be deployed anywhere.
+    A host is targeted when it carries at least one of
+    these labels. Reserved labels (`controller`, `worker`,
+    `sole`) may be used here to target all nodes of a
+    given k0s role, or mixed freely with user-defined labels.
 
 locations:
   type: uri
@@ -45,5 +38,6 @@ init-cmds:
     List of initialization commands, executed
     once, needed to execute the feature at
     runtime
+
 
   

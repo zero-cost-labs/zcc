@@ -2,29 +2,21 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 
 class Feature(BaseModel):
     """
     A feature (program, configuration, or storage capability) deployed to
-    cluster nodes that match by label or role.
+    every cluster node that carries at least one of the feature's labels.
+    Reserved labels (``controller``, ``worker``, ``sole``) may be used here
+    to target nodes by their k0s role.
     """
 
     name: str
-    labels: list[str] = []
-    roles: list[str] = []
+    labels: list[str] = Field(min_length=1)
     locations: list[str] = []
     install_cmds: list[str] = Field(default=[], alias="install-cmds")
     init_cmds: list[str] = Field(default=[], alias="init-cmds")
 
     model_config = {"populate_by_name": True}
-
-    @model_validator(mode="after")
-    def has_target_selector(self) -> "Feature":
-        if not self.labels and not self.roles:
-            raise ValueError(
-                f"Feature '{self.name}' must specify at least one label or role "
-                "to target hosts"
-            )
-        return self
