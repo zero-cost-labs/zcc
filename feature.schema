@@ -7,13 +7,17 @@ labels:
   type: string
   arity: 1..*
   description: |
-    Label(s) used to select the host(s) onto which to
-    install this feature.
+    Label(s) used to select the host(s) onto which to install this feature.
 
-    A host is targeted when it carries at least one of
-    these labels. Reserved labels (`controller`, `worker`,
-    `sole`) may be used here to target all nodes of a
-    given k0s role, or mixed freely with user-defined labels.
+    A host is targeted when it carries at least one of these labels.
+
+    **Label absorption**: when none of the cluster's hosts carry a matching
+    label, the feature is instead deployed to every sole node (controllers
+    running in --single mode).  This lets sole nodes act as a catch-all for
+    features that haven't been explicitly routed yet.  Once a dedicated
+    non-controller host with a matching label is added to the cluster, the
+    explicit match takes precedence and the sole node no longer receives
+    the feature.
 
 locations:
   type: uri

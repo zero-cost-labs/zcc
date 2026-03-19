@@ -69,3 +69,35 @@ class TestLoadCluster:
         )
         cluster = load_cluster(cfg)
         assert "sole" in cluster.hosts[0].labels
+
+    def test_no_sole_field_loaded(self, tmp_path):
+        """no-sole: true is preserved after loading."""
+        cfg = tmp_path / "no-sole.yaml"
+        cfg.write_text(
+            "name: no-sole\n"
+            "hosts:\n"
+            "  - name: ctrl\n"
+            "    uri: 10.0.0.1\n"
+            "    labels: [controller]\n"
+            "    no-sole: true\n"
+        )
+        cluster = load_cluster(cfg)
+        assert cluster.hosts[0].no_sole is True
+
+    def test_custom_labels_on_non_controller(self, tmp_path):
+        """Non-controller nodes may carry only user-defined labels."""
+        cfg = tmp_path / "custom.yaml"
+        cfg.write_text(
+            "name: custom\n"
+            "hosts:\n"
+            "  - name: ctrl\n"
+            "    uri: 10.0.0.1\n"
+            "    labels: [controller]\n"
+            "  - name: compute\n"
+            "    uri: 10.0.0.2\n"
+            "    labels: [gpu, high-memory]\n"
+        )
+        cluster = load_cluster(cfg)
+        compute = next(h for h in cluster.hosts if h.name == "compute")
+        assert "gpu" in compute.labels
+        assert compute.no_sole is False

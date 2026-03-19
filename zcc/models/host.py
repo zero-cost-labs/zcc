@@ -75,10 +75,16 @@ class Host(BaseModel):
     name: str
     uri: str  # unique identifier — IP or resolvable hostname
     labels: list[str] = Field(min_length=1)
+    # When True, prevents auto-sole promotion even when topology would normally
+    # trigger it (all-controller cluster).  The node still runs as a pure k0s
+    # controller without the --single flag.
+    no_sole: bool = Field(default=False, alias="no-sole")
     ssh: SSHConfig = Field(default_factory=SSHConfig)
     ports: list[PortConfig] = []
     storage: list[StorageConfig] = []
     limits: list[LimitConfig] = []
+
+    model_config = {"populate_by_name": True}
 
     def has_label(self, *labels: str) -> bool:
         """Return True when the host carries at least one of *labels*."""

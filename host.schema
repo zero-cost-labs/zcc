@@ -14,25 +14,28 @@ labels:
   type: string
   arity: 1..*
   description: |
-    Labels that describe this host's roles and capabilities.
+    Labels that describe this host's capabilities and targeting identity.
+    At least one label is required.
 
-    Reserved labels — understood by the framework and used to
-    configure the underlying k0s installation:
+    The framework understands two reserved labels that control how k0s is
+    installed on the node:
 
-      controller  Runs the Kubernetes control plane (k0s controller)
-      worker      Runs workloads / Pods (k0s worker)
-      sole        Runs both the control plane and workloads on a
-                  single node (k0s controller --single)
+      controller  Runs the Kubernetes control plane (k0s controller).
+                  At least one host in the cluster MUST carry this label.
+      sole        Runs both the control plane and workloads on a single node
+                  (k0s controller --single).  Can also be triggered
+                  automatically — see `no-sole` below.
 
-    Every host must carry at least one reserved label so that the
-    framework knows how to install k0s on it.  Additional,
-    user-defined labels can be combined freely for fine-grained
-    feature targeting.
+    All other labels are user-defined and used exclusively for feature
+    targeting.  There is no requirement to use the `worker` label; any host
+    that does not carry `controller` or `sole` is automatically treated as a
+    k0s worker node.
 
     Examples:
       labels: [controller]
-      labels: [worker, compute, gpu]
-      labels: [sole, dev]
+      labels: [controller, primary, monitoring]
+      labels: [compute, gpu]          # implicitly a k0s worker
+      labels: [storage, high-io]      # implicitly a k0s worker
 
 ssh:
   type: custom
@@ -59,6 +62,17 @@ ssh:
         Path to a known_hosts file used to verify the host's SSH key.
         Defaults to ~/.ssh/known_hosts. Set to empty string to use only
         the system-level known_hosts without loading the user file.
+
+no-sole:
+  type: boolean
+  default: false
+  description: |
+    When true, prevents this controller from being promoted to sole mode,
+    even when the cluster topology would normally trigger auto-sole (i.e.
+    no non-controller hosts exist).  The node runs as a pure k0s controller
+    without the --single flag and does NOT absorb unmatched feature labels.
+
+    Has no effect on non-controller hosts.
 
 ports:
   type: custom

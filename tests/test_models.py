@@ -86,6 +86,26 @@ class TestHost:
         assert host.ssh.user == "ubuntu"
         assert host.ssh.port == 2222
 
+    def test_no_sole_default_false(self):
+        host = Host.model_validate(self._minimal())
+        assert host.no_sole is False
+
+    def test_no_sole_can_be_set_true(self):
+        host = Host.model_validate(self._minimal(**{"no-sole": True}))
+        assert host.no_sole is True
+
+    def test_no_sole_python_name_works(self):
+        host = Host.model_validate(self._minimal(no_sole=True))
+        assert host.no_sole is True
+
+    def test_custom_only_labels_valid(self):
+        """A host with only user-defined labels (no reserved) is valid at host level."""
+        host = Host.model_validate(
+            self._minimal(labels=["compute", "gpu", "high-memory"])
+        )
+        assert "compute" in host.labels
+        assert host.no_sole is False
+
     def test_limit_percent_out_of_range(self):
         with pytest.raises(ValidationError):
             Host.model_validate(
@@ -263,6 +283,37 @@ class TestCluster:
                     ],
                 }
             )
+
+    def test_non_controller_host_with_custom_labels_only(self):
+        """Non-controller nodes need no reserved labels; they're workers by topology."""
+        cluster = Cluster.model_validate(
+            {
+                "name": "free-label",
+                "hosts": [
+                    {"name": "ctrl", "uri": "10.0.0.1", "labels": ["controller"]},
+                    {"name": "n1", "uri": "10.0.0.2", "labels": ["compute", "gpu"]},
+                    {"name": "n2", "uri": "10.0.0.3", "labels": ["storage", "high-io"]},
+                ],
+            }
+        )
+        assert len(cluster.hosts) == 3
+
+    def test_no_sole_field_round_trips(self):
+        """no-sole is preserved on the model."""
+        cluster = Cluster.model_validate(
+            {
+                "name": "no-sole-cluster",
+                "hosts": [
+                    {
+                        "name": "ctrl",
+                        "uri": "10.0.0.1",
+                        "labels": ["controller"],
+                        "no-sole": True,
+                    }
+                ],
+            }
+        )
+        assert cluster.hosts[0].no_sole is True
 
     def test_version_default(self):
         cluster = Cluster.model_validate(self._minimal())
