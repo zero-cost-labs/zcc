@@ -352,12 +352,17 @@ class TestDockerSwarmBackend:
     def test_install_runs_docker_install_script(self):
         ssh = MagicMock()
         ssh.host.uri = "10.0.0.1"
+        ssh.host.ssh.user = "ubuntu"
 
         DockerSwarmBackend().install(ssh)
 
-        ssh.run_checked.assert_called_once_with(
-            "curl -fsSL https://get.docker.com | sudo sh"
+        ssh.run_checked.assert_has_calls(
+            [
+                call("curl -fsSL https://get.docker.com | sudo sh"),
+                call("sudo usermod -aG docker ubuntu"),
+            ]
         )
+        assert ssh.run_checked.call_count == 2
 
     def test_init_controller_returns_both_tokens(self):
         ssh = MagicMock()
@@ -374,9 +379,9 @@ class TestDockerSwarmBackend:
         assert wrk == "SWMTKN-worker"
         ssh.run_checked.assert_has_calls(
             [
-                call("sudo docker swarm init --advertise-addr 10.0.0.1"),
-                call("sudo docker swarm join-token manager -q"),
-                call("sudo docker swarm join-token worker -q"),
+                call("docker swarm init --advertise-addr 10.0.0.1"),
+                call("docker swarm join-token manager -q"),
+                call("docker swarm join-token worker -q"),
             ]
         )
 
@@ -410,7 +415,7 @@ class TestDockerSwarmBackend:
         backend.join_controller(ssh, "SWMTKN-manager")
 
         ssh.run_checked.assert_called_once_with(
-            "sudo docker swarm join --token SWMTKN-manager 10.0.0.1:2377"
+            "docker swarm join --token SWMTKN-manager 10.0.0.1:2377"
         )
 
     def test_join_worker_uses_worker_token_and_addr(self):
@@ -422,7 +427,7 @@ class TestDockerSwarmBackend:
         backend.join_worker(ssh, "SWMTKN-worker")
 
         ssh.run_checked.assert_called_once_with(
-            "sudo docker swarm join --token SWMTKN-worker 10.0.0.1:2377"
+            "docker swarm join --token SWMTKN-worker 10.0.0.1:2377"
         )
 
     def test_enable_worker_scheduling_is_noop(self):
@@ -444,7 +449,7 @@ class TestDockerSwarmBackend:
 
         assert result == "active"
         ssh.run.assert_called_once_with(
-            "sudo docker info --format '{{.Swarm.LocalNodeState}}'"
+            "docker info --format '{{.Swarm.LocalNodeState}}'"
         )
 
     def test_status_returns_error_message_when_docker_not_running(self):
@@ -490,6 +495,6 @@ class TestDockerSwarmBackend:
         backend.join_worker(join_ssh, wrk_tok)
 
         join_ssh.run_checked.assert_called_once_with(
-            f"sudo docker swarm join --token {wrk_tok} 10.0.0.1:2377"
+            f"docker swarm join --token {wrk_tok} 10.0.0.1:2377"
         )
 

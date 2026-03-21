@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shlex
 
 from .backend import ClusterBackend
 from .ssh import SSHClient, SSHError
@@ -12,8 +13,8 @@ logger = logging.getLogger(__name__)
 # Docker upstream installer script
 _DOCKER_INSTALL_SCRIPT = "curl -fsSL https://get.docker.com | sudo sh"
 
-# Docker Swarm commands
-_SWARM_STATUS = "sudo docker info --format '{{.Swarm.LocalNodeState}}'"
+# Docker Swarm commands (no sudo — user is in the docker group after install)
+_SWARM_STATUS = "docker info --format '{{.Swarm.LocalNodeState}}'"
 
 
 class DockerSwarmError(SSHError):
@@ -46,9 +47,14 @@ class DockerSwarmBackend(ClusterBackend):
     # ------------------------------------------------------------------
 
     def install(self, ssh: SSHClient) -> None:
-        """Download and install Docker Engine on the remote host."""
+        """Download and install Docker Engine on the remote host, then add the
+        SSH user to the ``docker`` group so that subsequent Docker commands do
+        not require ``sudo``."""
         logger.info("[%s] Installing Docker Engine", ssh.host.uri)
         ssh.run_checked(_DOCKER_INSTALL_SCRIPT)
+        user = ssh.host.ssh.user
+        logger.info("[%s] Adding user '%s' to the docker group", ssh.host.uri, user)
+        ssh.run_checked(f"sudo usermod -aG docker {shlex.quote(user)}")
 
     # ------------------------------------------------------------------
     # Swarm bootstrap
@@ -77,11 +83,11 @@ class DockerSwarmBackend(ClusterBackend):
         logger.info("[%s] Initialising Docker Swarm", ssh.host.uri)
         self._manager_addr = f"{ssh.host.uri}:2377"
         ssh.run_checked(
-            f"sudo docker swarm init --advertise-addr {ssh.host.uri}"
+            f"docker swarm init --advertise-addr {ssh.host.uri}"
         )
         logger.info("[%s] Generating manager and worker join-tokens", ssh.host.uri)
-        manager_token = ssh.run_checked("sudo docker swarm join-token manager -q")
-        worker_token = ssh.run_checked("sudo docker swarm join-token worker -q")
+        manager_token = ssh.run_checked("docker swarm join-token manager -q")
+        worker_token = ssh.run_checked("docker swarm join-token worker -q")
         return manager_token.strip(), worker_token.strip()
 
     def enable_worker_scheduling(self, ssh: SSHClient) -> None:
@@ -108,7 +114,7 @@ class DockerSwarmBackend(ClusterBackend):
             )
         logger.info("[%s] Joining Docker Swarm as manager", ssh.host.uri)
         ssh.run_checked(
-            f"sudo docker swarm join --token {token} {self._manager_addr}"
+            f"docker swarm join --token {token} {self._manager_addr}"
         )
 
     # ------------------------------------------------------------------
@@ -132,7 +138,7 @@ class DockerSwarmBackend(ClusterBackend):
             )
         logger.info("[%s] Joining Docker Swarm as worker", ssh.host.uri)
         ssh.run_checked(
-            f"sudo docker swarm join --token {token} {self._manager_addr}"
+            f"docker swarm join --token {token} {self._manager_addr}"
         )
 
     # ------------------------------------------------------------------

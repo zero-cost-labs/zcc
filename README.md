@@ -46,6 +46,38 @@ labels: [sole, dev]
 pip install zcc
 ```
 
+### Node prerequisites
+
+Before running `zcc deploy`, every target node must satisfy two conditions:
+
+1. **SSH key access** — `zcc` connects over SSH using the key or password you
+   configure in the cluster YAML.  Password-based auth is supported but key-based
+   auth is strongly recommended.
+
+2. **Passwordless sudo** — both the k0s and Docker Swarm backends issue
+   privileged commands (binary install, service registration, network
+   configuration) using `sudo`.  The SSH user must be able to run `sudo` without
+   a password prompt.  A minimal `/etc/sudoers.d/` drop-in is the standard way to
+   configure this:
+
+   ```
+   # /etc/sudoers.d/zcc
+   ubuntu ALL=(ALL) NOPASSWD: ALL
+   ```
+
+   Replace `ubuntu` with the SSH user configured in your cluster YAML.
+
+   > **Note — Docker Swarm**: `install` adds the SSH user to the `docker` group
+   > (`sudo usermod -aG docker <user>`), so all subsequent Docker Swarm commands
+   > (`swarm init`, `swarm join`, `docker info`) run without `sudo` once the
+   > install step has completed and a fresh SSH connection has been opened.
+   >
+   > **Note — k0s**: k0s requires root for every lifecycle operation (service
+   > install, start, kubectl, token generation, taint removal).  Running k0s as a
+   > non-root user is an [open upstream feature request](https://github.com/k0sproject/k0s/issues/5910)
+   > with no supported workaround at this time.  Passwordless sudo is therefore a
+   > firm prerequisite for k0s clusters.
+
 ### 1. Write a cluster config
 
 ```yaml
