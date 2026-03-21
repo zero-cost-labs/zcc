@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from .backend import ClusterBackend
 from .ssh import SSHClient, SSHError
 
 if TYPE_CHECKING:
@@ -26,7 +27,7 @@ class K0sError(SSHError):
     """Raised when a k0s operation fails."""
 
 
-class K0sInstaller:
+class K0sInstaller(ClusterBackend):
     """
     Installs and configures k0s on remote cluster nodes.
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, call
 
+from zcc.deploy.backend import ClusterBackend
 from zcc.deploy.k0s import K0sInstaller
 from zcc.deploy.orchestrator import DeployOrchestrator
 from zcc.deploy.ssh import SSHClient
@@ -125,7 +126,7 @@ class TestDeployOrchestratorControllerJoin:
         orch = DeployOrchestrator(cluster)
 
         monkeypatch.setattr(DeployOrchestrator, "_run_parallel", lambda self, fn, items: [fn(i) for i in items])
-        monkeypatch.setattr(DeployOrchestrator, "_install_k0s_on", lambda self, host: None)
+        monkeypatch.setattr(DeployOrchestrator, "_install_on", lambda self, host: None)
 
         class DummySSH:
             def __init__(self, host):
@@ -154,10 +155,10 @@ class TestDeployOrchestratorControllerJoin:
         def deploy_feature(ssh, feature):
             calls.append(("feature", ssh.host.name, feature.name))
 
-        orch._k0s.init_controller = init_controller
-        orch._k0s.join_controller = join_controller
-        orch._k0s.join_worker = join_worker
-        orch._k0s.enable_worker_scheduling = lambda ssh: calls.append(
+        orch._backend.init_controller = init_controller
+        orch._backend.join_controller = join_controller
+        orch._backend.join_worker = join_worker
+        orch._backend.enable_worker_scheduling = lambda ssh: calls.append(
             ("untaint", ssh.host.name)
         )
         orch._features.deploy = deploy_feature
@@ -184,7 +185,7 @@ class TestDeployOrchestratorControllerJoin:
         monkeypatch.setattr(
             DeployOrchestrator, "_run_parallel", lambda self, fn, items: [fn(i) for i in items]
         )
-        monkeypatch.setattr(DeployOrchestrator, "_install_k0s_on", lambda self, host: None)
+        monkeypatch.setattr(DeployOrchestrator, "_install_on", lambda self, host: None)
 
         class DummySSH:
             def __init__(self, host):
@@ -210,10 +211,10 @@ class TestDeployOrchestratorControllerJoin:
         def join_worker(ssh, token):
             calls.append(("join-worker", ssh.host.name, token))
 
-        orch._k0s.init_controller = init_controller
-        orch._k0s.join_controller = join_controller
-        orch._k0s.join_worker = join_worker
-        orch._k0s.enable_worker_scheduling = lambda ssh: calls.append(
+        orch._backend.init_controller = init_controller
+        orch._backend.join_controller = join_controller
+        orch._backend.join_worker = join_worker
+        orch._backend.enable_worker_scheduling = lambda ssh: calls.append(
             ("untaint", ssh.host.name)
         )
         orch._features.deploy = lambda ssh, feature: None
@@ -223,3 +224,119 @@ class TestDeployOrchestratorControllerJoin:
         assert ("join-controller", "c2", "controller-token") in calls
         assert ("join-worker", "w1", "worker-token") in calls
         assert ("untaint", "c2") not in calls
+
+
+class TestClusterBackend:
+    """Tests for the ClusterBackend abstract interface and custom backend injection."""
+
+    def test_k0s_installer_is_a_cluster_backend(self):
+        """K0sInstaller must satisfy the ClusterBackend interface."""
+        assert issubclass(K0sInstaller, ClusterBackend)
+        assert isinstance(K0sInstaller(), ClusterBackend)
+
+    def test_cannot_instantiate_cluster_backend_directly(self):
+        """ClusterBackend is abstract and cannot be instantiated directly."""
+        import pytest
+
+        with pytest.raises(TypeError):
+            ClusterBackend()  # type: ignore[abstract]
+
+    def test_orchestrator_defaults_to_k0s_backend(self):
+        """When no backend is supplied, the orchestrator uses K0sInstaller."""
+        cluster = _cluster(
+            {
+                "name": "t",
+                "hosts": [{"name": "h", "uri": "10.0.0.1", "labels": ["controller"]}],
+            }
+        )
+        orch = DeployOrchestrator(cluster)
+        assert isinstance(orch._backend, K0sInstaller)
+
+    def test_orchestrator_accepts_custom_backend(self):
+        """A custom ClusterBackend implementation is accepted by the orchestrator."""
+
+        class DummyBackend(ClusterBackend):
+            def install(self, ssh):
+                pass
+
+            def init_controller(self, ssh, *, enable_workers=False):
+                return ("ct", "wt")
+
+            def enable_worker_scheduling(self, ssh):
+                pass
+
+            def join_controller(self, ssh, token):
+                pass
+
+            def join_worker(self, ssh, token):
+                pass
+
+            def status(self, ssh):
+                return "ok"
+
+        cluster = _cluster(
+            {
+                "name": "t",
+                "hosts": [{"name": "h", "uri": "10.0.0.1", "labels": ["controller"]}],
+            }
+        )
+        backend = DummyBackend()
+        orch = DeployOrchestrator(cluster, backend=backend)
+        assert orch._backend is backend
+
+    def test_orchestrator_uses_injected_backend_during_deploy(self, monkeypatch):
+        """The orchestrator calls the injected backend, not a hardcoded K0sInstaller."""
+
+        class TrackingBackend(ClusterBackend):
+            def __init__(self):
+                self.calls: list[str] = []
+
+            def install(self, ssh):
+                self.calls.append("install")
+
+            def init_controller(self, ssh, *, enable_workers=False):
+                self.calls.append("init_controller")
+                return ("ct", "wt")
+
+            def enable_worker_scheduling(self, ssh):
+                self.calls.append("enable_worker_scheduling")
+
+            def join_controller(self, ssh, token):
+                self.calls.append("join_controller")
+
+            def join_worker(self, ssh, token):
+                self.calls.append("join_worker")
+
+            def status(self, ssh):
+                return "ok"
+
+        cluster = _cluster(
+            {
+                "name": "t",
+                "hosts": [{"name": "h", "uri": "10.0.0.1", "labels": ["controller"]}],
+            }
+        )
+        backend = TrackingBackend()
+        orch = DeployOrchestrator(cluster, backend=backend)
+
+        monkeypatch.setattr(
+            DeployOrchestrator, "_run_parallel", lambda self, fn, items: [fn(i) for i in items]
+        )
+
+        class DummySSH:
+            def __init__(self, host):
+                self.host = host
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return None
+
+        monkeypatch.setattr("zcc.deploy.orchestrator.SSHClient", DummySSH)
+        orch._features.deploy = lambda ssh, feature: None
+
+        orch.deploy()
+
+        assert "install" in backend.calls
+        assert "init_controller" in backend.calls
