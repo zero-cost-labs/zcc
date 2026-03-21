@@ -3,8 +3,8 @@
 A Kubernetes cluster management framework powered by [k0s](https://k0sproject.io/).
 
 `zcc` lets you describe a cluster in a single YAML file and deploy it with one
-command.  Every node carries **labels**.  Three reserved labels map directly to
-k0s node roles; all other labels are user-defined and used for feature
+command.  Every node carries **labels**.  Two reserved labels map directly to
+k0s controller behavior; all other labels are user-defined and used for feature
 targeting.  **Features** — programs, configurations, storage capabilities —
 are deployed to every node that shares at least one of their labels.
 
@@ -21,20 +21,20 @@ are deployed to every node that shares at least one of their labels.
 
 ### Reserved labels
 
-Three labels are understood by the framework and map to k0s node roles.
-Every host must carry at least one of them.
+Two labels are reserved by the framework:
 
 | Label | k0s equivalent | Description |
 |-------|----------------|-------------|
 | `controller` | k0s controller | Runs the Kubernetes control plane |
-| `worker` | k0s worker | Runs workloads (Pods) |
-| `sole` | k0s controller --single | Control plane **and** workloads on one node |
+| `sole` | k0s controller | Runs control plane and also accepts workloads by removing controller NoSchedule taint |
 
+Hosts are allowed to have no reserved labels. Any host that is not labeled
+`controller` or `sole` is treated as a worker.
 All other labels are user-defined and can be combined freely:
 
 ```yaml
 labels: [controller, primary, monitoring]
-labels: [worker, compute, gpu, high-mem]
+labels: [compute, gpu, high-mem]
 labels: [sole, dev]
 ```
 
@@ -63,7 +63,7 @@ hosts:
 
   - name: worker-1
     uri: 192.168.1.11
-    labels: [worker, compute]
+    labels: [compute]
     ssh:
       user: ubuntu
       key: ~/.ssh/id_rsa
