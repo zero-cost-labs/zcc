@@ -18,6 +18,8 @@ _K0S_INSTALL_SCRIPT = "curl -sSLf https://get.k0s.sh | sudo sh"
 # k0s service commands
 _K0S_START = "sudo k0s start"
 _K0S_STATUS = "sudo k0s status"
+_CONTROLLER_TOKEN_PATH = "/tmp/k0s-controller-token"
+_WORKER_TOKEN_PATH = "/tmp/k0s-worker-token"
 
 
 class K0sError(SSHError):
@@ -30,11 +32,11 @@ class K0sInstaller:
 
     The deployment order must be::
 
-        1. Install k0s binary on every host.
-        2. Bootstrap the first controller (or sole-like) node — this produces
-           both controller and worker join-tokens.
-        3. Join additional controllers with the controller token.
-        4. Join all worker nodes using the worker token.
+    1. Install k0s binary on every host.
+    2. Bootstrap the first controller (or sole-like) node — this produces both
+       controller and worker join-tokens.
+    3. Join additional controllers with the controller token.
+    4. Join all worker nodes using the worker token.
     """
 
     # ------------------------------------------------------------------
@@ -86,8 +88,8 @@ class K0sInstaller:
         """Allow regular workloads on a controller by removing its NoSchedule taint."""
         logger.info("[%s] Removing controller NoSchedule taint", ssh.host.uri)
         ssh.run_checked(
-            'sudo k0s kubectl taint nodes "$(hostname)" '
-            "node-role.kubernetes.io/control-plane:NoSchedule-"
+            "sudo k0s kubectl taint nodes --all "
+            "node-role.kubernetes.io/control-plane:NoSchedule- || true"
         )
 
     def join_controller(self, ssh: SSHClient, token: str) -> None:
@@ -102,9 +104,9 @@ class K0sInstaller:
             Controller join-token produced by :meth:`init_controller`.
         """
         logger.info("[%s] Joining k0s cluster as controller", ssh.host.uri)
-        ssh.write_text("/tmp/k0s-controller-token", token)
+        ssh.write_text(_CONTROLLER_TOKEN_PATH, token, mode=0o600)
         ssh.run_checked(
-            "sudo k0s install controller --token-file /tmp/k0s-controller-token"
+            f"sudo k0s install controller --token-file {_CONTROLLER_TOKEN_PATH}"
         )
         ssh.run_checked(_K0S_START)
 
@@ -124,8 +126,8 @@ class K0sInstaller:
             Join-token produced by :meth:`init_controller`.
         """
         logger.info("[%s] Joining k0s cluster as worker", ssh.host.uri)
-        ssh.write_text("/tmp/k0s-worker-token", token)
-        ssh.run_checked("sudo k0s install worker --token-file /tmp/k0s-worker-token")
+        ssh.write_text(_WORKER_TOKEN_PATH, token, mode=0o600)
+        ssh.run_checked(f"sudo k0s install worker --token-file {_WORKER_TOKEN_PATH}")
         ssh.run_checked(_K0S_START)
 
     # ------------------------------------------------------------------

@@ -129,7 +129,9 @@ class SSHClient:
             )
         return out
 
-    def write_text(self, remote_path: str, content: str) -> None:
+    def write_text(
+        self, remote_path: str, content: str, *, mode: int | None = None
+    ) -> None:
         """Write text content to *remote_path* on the remote host."""
         if self._client is None:
             raise SSHError("Not connected")
@@ -137,6 +139,8 @@ class SSHClient:
         try:
             with sftp.file(remote_path, "w") as remote_file:
                 remote_file.write(content)
+            if mode is not None:
+                sftp.chmod(remote_path, mode)
         finally:
             sftp.close()
 

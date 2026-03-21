@@ -43,11 +43,11 @@ class DeployOrchestrator:
 
     **Deployment order**
 
-        1. Install k0s binary on **all** hosts (parallel).
-        2. Bootstrap the primary controller/sole node → obtain controller+worker tokens.
-        3. Join remaining controller nodes (parallel).
-        4. Join all non-controller nodes as k0s workers (parallel).
-        5. Deploy features to their target hosts (per-feature, parallel).
+    1. Install k0s binary on **all** hosts (parallel).
+    2. Bootstrap the primary controller/sole node → obtain controller+worker tokens.
+    3. Join remaining controller nodes (parallel).
+    4. Join all non-controller nodes as k0s workers (parallel).
+    5. Deploy features to their target hosts (per-feature, parallel).
     """
 
     def __init__(self, cluster: "Cluster") -> None:
@@ -82,11 +82,11 @@ class DeployOrchestrator:
                 if self._is_sole(host):
                     self._k0s.enable_worker_scheduling(ssh)
 
-        if controller_token and controllers[1:]:
+        if controller_token.strip() and controllers[1:]:
             self._run_parallel(_init_ctrl, controllers[1:])
 
         # Step 4 — join non-controller nodes as k0s workers in parallel.
-        if worker_token and non_controllers:
+        if worker_token.strip() and non_controllers:
             def _join(host: Host) -> None:
                 with SSHClient(host) as ssh:
                     self._k0s.join_worker(ssh, worker_token)
