@@ -1,4 +1,4 @@
-"""Deployment orchestrator — wires together k0s and feature deployment."""
+"""Deployment orchestrator — wires together a cluster backend and feature deployment."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Callable
 
 from ..models.host import Host
+from .backend import ClusterBackend
 from .feature import FeatureDeployer
 from .k0s import K0sInstaller
 from .ssh import SSHClient
@@ -31,7 +32,7 @@ class DeployOrchestrator:
     * The cluster contains no non-controller hosts (auto-sole topology) and the
       host has not set ``no-sole: true``.
 
-    A host with ``no-sole: true`` always runs as a pure k0s controller
+    A host with ``no-sole: true`` always runs as a pure controller
     regardless of topology.
 
     **Label absorption**
@@ -43,16 +44,18 @@ class DeployOrchestrator:
 
     **Deployment order**
 
-    1. Install k0s binary on **all** hosts (parallel).
+    1. Install the backend on **all** hosts (parallel).
     2. Bootstrap the primary controller/sole node → obtain controller+worker tokens.
     3. Join remaining controller nodes (parallel).
-    4. Join all non-controller nodes as k0s workers (parallel).
+    4. Join all non-controller nodes as workers (parallel).
     5. Deploy features to their target hosts (per-feature, parallel).
     """
 
-    def __init__(self, cluster: "Cluster") -> None:
+    def __init__(
+        self, cluster: "Cluster", backend: ClusterBackend | None = None
+    ) -> None:
         self.cluster = cluster
-        self._k0s = K0sInstaller()
+        self._backend: ClusterBackend = backend if backend is not None else K0sInstaller()
         self._features = FeatureDeployer()
 
     # ------------------------------------------------------------------
@@ -65,31 +68,31 @@ class DeployOrchestrator:
 
         controllers, non_controllers = self._split_hosts()
 
-        # Step 1 — install k0s binary on every node in parallel.
-        self._run_parallel(self._install_k0s_on, self.cluster.hosts)
+        # Step 1 — install the backend on every node in parallel.
+        self._run_parallel(self._install_on, self.cluster.hosts)
 
         # Step 2 — bootstrap the primary controller.
         primary = controllers[0]
         with SSHClient(primary) as ssh:
-            controller_token, worker_token = self._k0s.init_controller(
+            controller_token, worker_token = self._backend.init_controller(
                 ssh, enable_workers=self._is_sole(primary)
             )
 
         # Step 3 — join remaining controllers in parallel.
         def _init_ctrl(host: Host) -> None:
             with SSHClient(host) as ssh:
-                self._k0s.join_controller(ssh, controller_token)
+                self._backend.join_controller(ssh, controller_token)
                 if self._is_sole(host):
-                    self._k0s.enable_worker_scheduling(ssh)
+                    self._backend.enable_worker_scheduling(ssh)
 
         if controller_token.strip() and controllers[1:]:
             self._run_parallel(_init_ctrl, controllers[1:])
 
-        # Step 4 — join non-controller nodes as k0s workers in parallel.
+        # Step 4 — join non-controller nodes as workers in parallel.
         if worker_token.strip() and non_controllers:
             def _join(host: Host) -> None:
                 with SSHClient(host) as ssh:
-                    self._k0s.join_worker(ssh, worker_token)
+                    self._backend.join_worker(ssh, worker_token)
 
             self._run_parallel(_join, non_controllers)
 
@@ -214,9 +217,9 @@ class DeployOrchestrator:
             return targets[:1]
         return targets
 
-    def _install_k0s_on(self, host: Host) -> None:
+    def _install_on(self, host: Host) -> None:
         with SSHClient(host) as ssh:
-            self._k0s.install(ssh)
+            self._backend.install(ssh)
 
     def _run_parallel(
         self, fn: Callable[[Host], None], items: list[Host]
