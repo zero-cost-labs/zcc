@@ -1,0 +1,32 @@
+# Cluster that references feature definitions by URI and by name,
+# rather than defining them fully inline.
+name: valid-cluster-feature-refs
+version: v1
+
+hosts:
+  - name: ctrl
+    uri: 10.0.0.1
+    labels: [controller, primary]
+    ssh:
+      user: ubuntu
+      key: /home/user/.ssh/id_rsa
+
+  - name: worker-a
+    uri: 10.0.0.2
+    labels: [worker, compute]
+    ssh:
+      user: ubuntu
+
+  - name: worker-b
+    uri: 10.0.0.3
+    labels: [worker, compute, storage]
+    ssh:
+      user: ubuntu
+
+features:
+  # URI reference: loads definition from the given file path.
+  - uri: ./feature-monitoring.yaml
+
+  # Name-only reference: loads from ./features/storage-backend.yaml
+  # by the features/<name>.yaml convention.
+  - name: storage-backend

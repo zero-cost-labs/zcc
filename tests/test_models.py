@@ -176,6 +176,11 @@ class TestFeature:
         with pytest.raises(ValidationError):
             Feature.model_validate({"name": "orphan", "labels": []})
 
+    def test_no_name_and_no_uri_fails(self):
+        """A feature entry with neither name nor uri must be rejected."""
+        with pytest.raises(ValidationError):
+            Feature.model_validate({"labels": ["worker"]})
+
     def test_install_cmds_alias(self):
         feat = Feature.model_validate(
             {
@@ -193,6 +198,49 @@ class TestFeature:
             {"name": "app", "labels": ["x"], "locations": ["./charts/app"]}
         )
         assert feat.locations == ["./charts/app"]
+
+    # ------------------------------------------------------------------
+    # URI-reference form
+    # ------------------------------------------------------------------
+
+    def test_uri_only_is_valid(self):
+        """A feature with only a uri is a valid unresolved reference."""
+        feat = Feature.model_validate({"uri": "./features/monitoring.yaml"})
+        assert feat.uri == "./features/monitoring.yaml"
+        assert feat.name is None
+        assert feat.labels == []
+
+    def test_uri_with_name_override_is_valid(self):
+        """uri + explicit name is a valid reference with an identifier."""
+        feat = Feature.model_validate(
+            {"name": "my-monitoring", "uri": "./features/monitoring.yaml"}
+        )
+        assert feat.name == "my-monitoring"
+        assert feat.uri == "./features/monitoring.yaml"
+
+    def test_uri_with_full_inline_fields_is_valid(self):
+        """uri + inline labels keeps the inline labels (loader merge scenario)."""
+        feat = Feature.model_validate(
+            {
+                "name": "monitoring",
+                "uri": "./features/monitoring.yaml",
+                "labels": ["gpu"],
+                "install-cmds": ["echo gpu"],
+            }
+        )
+        assert feat.labels == ["gpu"]
+        assert feat.install_cmds == ["echo gpu"]
+
+    def test_uri_stored_on_resolved_feature(self):
+        """The uri field is preserved after resolution for transparency."""
+        feat = Feature.model_validate(
+            {
+                "name": "monitoring",
+                "uri": "./features/monitoring.yaml",
+                "labels": ["primary"],
+            }
+        )
+        assert feat.uri == "./features/monitoring.yaml"
 
 
 # ---------------------------------------------------------------------------

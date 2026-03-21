@@ -42,7 +42,9 @@ class Cluster(BaseModel):
     @field_validator("features")
     @classmethod
     def validate_features(cls, features: list[Feature]) -> list[Feature]:
-        names = [f.name for f in features]
+        # Uniqueness check: ignore entries whose name is None (unresolved URI
+        # references that have not yet been loaded by the loader).
+        names = [f.name for f in features if f.name is not None]
         if len(names) != len(set(names)):
             raise ValueError("Feature names must be unique within the cluster")
         return features
