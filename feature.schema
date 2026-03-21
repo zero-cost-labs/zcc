@@ -7,19 +7,28 @@ labels:
   type: string
   arity: 1..*
   description: |
-    Label(s) used to tag host(s) onto which to
-    install said feature
+    Label(s) used to select the host(s) onto which to install this feature.
+
+    A host is targeted when it carries at least one of these labels.
+
+    **Label absorption**: when none of the cluster's hosts carry a matching
+    label, the feature is instead deployed to every sole node (controllers
+    running in --single mode).  This lets sole nodes act as a catch-all for
+    features that haven't been explicitly routed yet.  Once a dedicated
+    non-controller host with a matching label is added to the cluster, the
+    explicit match takes precedence and the sole node no longer receives
+    the feature.
 
 locations:
   type: uri
-  arity: 1..*
+  arity: 0..*
   description: |
     Filepaths containing necessary installation
     scripts and configurations for deployment
 
 install-cmds:
   type: bash
-  arity: 1..*
+  arity: 0..*
   description: |
     List of installation commands. Runs
     sequentially. All filepaths defined under
@@ -28,9 +37,11 @@ install-cmds:
 
 init-cmds:
   type: bash
-  arity: 1..*
+  arity: 0..*
   description: |
     List of initialization commands, executed
     once, needed to execute the feature at
     runtime
+
+
   

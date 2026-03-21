@@ -4,6 +4,11 @@ name:
   id: true
   description: Unique name for the cluster
 
+version:
+  type: string
+  default: v1
+  description: Schema version for this cluster definition
+
 hosts:
   type: custom
   arity: 1..*
@@ -12,13 +17,15 @@ hosts:
 
 features:
   type: custom
-  arity: 1..*
+  arity: 0..*
   description: Cluster features to activate
   schema: feature.schema
 
 config:
   type: filesystem
-  arity: 1..*
-  description: Configuration locations
+  arity: 0..*
+  description: |
+    Local filesystem paths containing supplementary
+    configuration files made available during deployment
 
   

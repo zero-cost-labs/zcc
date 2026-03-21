@@ -1,0 +1,9 @@
+# Missing labels entirely — should fail validation.
+name: broken-cluster
+version: v1
+
+hosts:
+  - name: node
+    uri: 10.0.0.1
+    ssh:
+      user: root

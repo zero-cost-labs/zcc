@@ -1,0 +1,63 @@
+# Simple three-node cluster: one controller, two workers.
+#
+# Run `zcc validate examples/simple-cluster.yaml` to verify this file.
+# Run `zcc plan    examples/simple-cluster.yaml` to preview the deployment.
+# Run `zcc deploy  examples/simple-cluster.yaml` to deploy.
+
+name: simple-cluster
+version: v1
+
+hosts:
+  - name: controller-1
+    uri: 192.168.1.10
+    labels: [controller, primary]
+    ssh:
+      user: ubuntu
+      port: 22
+      key: ~/.ssh/id_rsa
+
+  - name: worker-1
+    uri: 192.168.1.11
+    labels: [worker, compute, storage]
+    ssh:
+      user: ubuntu
+      key: ~/.ssh/id_rsa
+    storage:
+      - role: data
+        location: /data
+        permissions: rw
+    limits:
+      - role: cpu
+        percent: 0.80
+      - role: ram
+        percent: 0.75
+
+  - name: worker-2
+    uri: 192.168.1.12
+    labels: [worker, compute]
+    ssh:
+      user: ubuntu
+      key: ~/.ssh/id_rsa
+    limits:
+      - role: cpu
+        percent: 0.80
+
+features:
+  - name: monitoring
+    labels: [primary, compute]
+    locations:
+      - ./features/monitoring
+    install-cmds:
+      - helm upgrade --install prometheus ./prometheus --namespace monitoring --create-namespace
+    init-cmds:
+      - kubectl apply -f ./dashboards
+
+  - name: storage-backend
+    labels: [storage]
+    locations:
+      - ./features/storage
+    install-cmds:
+      - helm upgrade --install longhorn ./longhorn --namespace longhorn-system --create-namespace
+
+config:
+  - ./config/cluster-settings.yaml

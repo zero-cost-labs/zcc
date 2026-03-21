@@ -1,0 +1,25 @@
+# Single-node cluster: the sole controller automatically becomes a sole node
+# (runs both control-plane and workloads, equivalent to k0s --single).
+# Useful for development, testing, or truly resource-constrained deployments.
+#
+# To prevent a controller from auto-promoting to sole mode in a multi-controller
+# cluster, add `no-sole: true` to that host.
+
+name: sole-node-cluster
+version: v1
+
+hosts:
+  - name: node-1
+    uri: 10.0.0.1
+    labels: [controller]
+    ssh:
+      user: root
+      key: ~/.ssh/id_rsa
+
+features:
+  - name: core-addons
+    # No node explicitly carries 'dashboard' — this feature is absorbed by
+    # the sole node (node-1) because it is the only node in the cluster.
+    labels: [dashboard]
+    install-cmds:
+      - kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.7.0/aio/deploy/recommended.yaml

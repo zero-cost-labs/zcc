@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zcc"
+version = "0.1.0"
+description = "Zero Cost Cluster — Kubernetes cluster management powered by k0s"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "click>=8.0",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "paramiko>=3.0",
+]
+
+[project.scripts]
+zcc = "zcc.cli:cli"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-mock>=3.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
