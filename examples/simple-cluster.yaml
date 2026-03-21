@@ -3,6 +3,16 @@
 # Run `zcc validate examples/simple-cluster.yaml` to verify this file.
 # Run `zcc plan    examples/simple-cluster.yaml` to preview the deployment.
 # Run `zcc deploy  examples/simple-cluster.yaml` to deploy.
+#
+# Feature entries may be defined inline (as below) or referenced externally:
+#
+#   By URI — load from a separate file:
+#     features:
+#       - uri: ./features/monitoring.yaml
+#
+#   By name — shorthand that resolves to features/<name>.yaml next to this file:
+#     features:
+#       - name: monitoring
 
 name: simple-cluster
 version: v1

@@ -1,0 +1,4 @@
+name: monitoring
+labels: [primary, compute]
+install-cmds:
+  - echo "install monitoring"

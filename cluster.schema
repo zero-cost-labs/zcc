@@ -18,7 +18,33 @@ hosts:
 features:
   type: custom
   arity: 0..*
-  description: Cluster features to activate
+  description: |
+    Cluster features to activate.
+
+    Each entry may be an inline feature definition **or** a reference to an
+    external feature file.  Three forms are supported:
+
+    1. **Inline** — full definition in the cluster YAML (current behaviour):
+         - name: monitoring
+           labels: [primary, compute]
+           install-cmds:
+             - helm install ...
+
+    2. **By URI** — load definition from a separate file:
+         - uri: ./features/monitoring.yaml
+
+       Any additional inline fields (e.g. `name`) override the values from
+       the referenced file.
+
+    3. **By name** — shorthand that looks up `features/<name>.yaml` relative
+       to the cluster file:
+         - name: monitoring
+
+       Equivalent to `uri: ./features/monitoring.yaml` without the explicit
+       path.  Use this convention when all your feature files live in a
+       `features/` directory next to the cluster YAML.
+
+    Forms 2 and 3 make feature definitions reusable across multiple clusters.
   schema: feature.schema
 
 config:

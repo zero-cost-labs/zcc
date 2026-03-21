@@ -3,6 +3,27 @@ name:
   unique: true
   id: true
 
+uri:
+  type: uri
+  arity: 0..1
+  description: |
+    Path to an external feature definition file (relative to the cluster
+    YAML or absolute).  When supplied the file is loaded and merged with
+    any inline fields — inline values take precedence over the file.
+
+    Using `uri` makes the `name` and `labels` fields optional: they can be
+    omitted and will be taken from the referenced file instead.
+
+    This is the primary mechanism for sharing and reusing feature
+    definitions across multiple clusters.
+
+    Example (URI only — name and labels come from the file):
+      - uri: ./features/prometheus.yaml
+
+    Example (URI with name override):
+      - name: my-prometheus
+        uri: ./features/prometheus.yaml
+
 labels:
   type: string
   arity: 1..*
@@ -18,6 +39,9 @@ labels:
     non-controller host with a matching label is added to the cluster, the
     explicit match takes precedence and the sole node no longer receives
     the feature.
+
+    Required for inline feature definitions.  May be omitted when `uri` is
+    provided and the referenced file contains the labels.
 
 locations:
   type: uri
