@@ -154,8 +154,8 @@ zcc/
 ├── models/          Pydantic models — Cluster, Host, Feature
 ├── loader.py        YAML → validated Cluster
 └── deploy/
-    ├── ssh.py       SSH client wrapper (paramiko) with known_hosts verification
-    ├── k0s.py       k0s binary install, controller bootstrap, worker join
+    ├── ssh.py       SSH wrapper around paramiko with known_hosts verification
+    ├── k0s.py       k0s binary install, controller join/bootstrap, worker join
     ├── feature.py   Feature file upload + command execution
     └── orchestrator.py  End-to-end deployment sequencing
 ```
@@ -163,9 +163,9 @@ zcc/
 Deployment order:
 
 1. Install k0s binary on every node
-2. Bootstrap the first `controller`/`sole` node → obtain worker join-token
-3. Bootstrap remaining controller nodes
-4. Join all `worker` nodes with the token
+2. Bootstrap the first `controller`/`sole` node → obtain controller + worker join-tokens
+3. Join remaining controller nodes with the controller token
+4. Join all non-controller nodes with the worker token
 5. Deploy each feature to the hosts that carry its labels
 
 ---

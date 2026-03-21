@@ -24,8 +24,8 @@ class DeployOrchestrator:
 
     **Sole-node semantics**
 
-    A controller runs as *sole* (k0s ``--single``, combining control-plane and
-    workloads on one node) when any of the following is true:
+    A controller runs as *sole* (control-plane + workloads on one node) when
+    any of the following is true:
 
     * The host explicitly carries the ``sole`` label, **or**
     * The cluster contains no non-controller hosts (auto-sole topology) and the
@@ -43,11 +43,11 @@ class DeployOrchestrator:
 
     **Deployment order**
 
-    1. Install k0s binary on **all** hosts (parallel).
-    2. Bootstrap the primary controller/sole node → obtain a worker join-token.
-    3. Bootstrap remaining controller nodes (parallel).
-    4. Join all non-controller nodes as k0s workers (parallel).
-    5. Deploy features to their target hosts (per-feature, parallel).
+        1. Install k0s binary on **all** hosts (parallel).
+        2. Bootstrap the primary controller/sole node → obtain controller+worker tokens.
+        3. Join remaining controller nodes (parallel).
+        4. Join all non-controller nodes as k0s workers (parallel).
+        5. Deploy features to their target hosts (per-feature, parallel).
     """
 
     def __init__(self, cluster: "Cluster") -> None:
@@ -71,16 +71,19 @@ class DeployOrchestrator:
         # Step 2 — bootstrap the primary controller.
         primary = controllers[0]
         with SSHClient(primary) as ssh:
-            worker_token = self._k0s.init_controller(
-                ssh, single=self._is_sole(primary)
+            controller_token, worker_token = self._k0s.init_controller(
+                ssh, enable_workers=self._is_sole(primary)
             )
 
-        # Step 3 — bootstrap remaining controllers in parallel.
+        # Step 3 — join remaining controllers in parallel.
         def _init_ctrl(host: Host) -> None:
             with SSHClient(host) as ssh:
-                self._k0s.init_controller(ssh, single=self._is_sole(host))
+                self._k0s.join_controller(ssh, controller_token)
+                if self._is_sole(host):
+                    self._k0s.enable_worker_scheduling(ssh)
 
-        self._run_parallel(_init_ctrl, controllers[1:])
+        if controller_token and controllers[1:]:
+            self._run_parallel(_init_ctrl, controllers[1:])
 
         # Step 4 — join non-controller nodes as k0s workers in parallel.
         if worker_token and non_controllers:
@@ -157,7 +160,7 @@ class DeployOrchestrator:
         return controllers, non_controllers
 
     def _is_sole(self, host: Host) -> bool:
-        """Return True when *host* should run as k0s ``--single`` (sole mode).
+        """Return True when *host* should run as sole (controller + workloads).
 
         Decision order:
 
