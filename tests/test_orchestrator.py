@@ -119,6 +119,41 @@ class TestPlan:
         assert "primary" in output
         assert "gpu" in output
 
+    def test_plan_shows_singleton_annotation(self):
+        """Plan output marks singleton features with [singleton]."""
+        cluster = _make_cluster(
+            {
+                "name": "singleton-test",
+                "hosts": [
+                    {"name": "a", "uri": "10.0.0.1", "labels": ["controller", "compute"]},
+                    {"name": "b", "uri": "10.0.0.2", "labels": ["worker", "compute"]},
+                ],
+                "features": [
+                    {"name": "db", "labels": ["compute"], "singleton": True},
+                ],
+            }
+        )
+        output = "\n".join(DeployOrchestrator(cluster).plan())
+        assert "[singleton]" in output
+        # Only the first matching host should appear as target
+        assert "a" in output
+
+    def test_plan_no_singleton_annotation_for_normal_feature(self):
+        """Plan output does not mark normal (non-singleton) features."""
+        cluster = _make_cluster(
+            {
+                "name": "normal-test",
+                "hosts": [
+                    {"name": "w1", "uri": "10.0.0.1", "labels": ["controller", "compute"]},
+                ],
+                "features": [
+                    {"name": "app", "labels": ["compute"]},
+                ],
+            }
+        )
+        output = "\n".join(DeployOrchestrator(cluster).plan())
+        assert "[singleton]" not in output
+
 
 class TestSplitHosts:
     def _orch(self, hosts) -> DeployOrchestrator:
@@ -344,6 +379,47 @@ class TestResolveTargets:
         feat = Feature.model_validate({"name": "f", "labels": ["primary", "compute"]})
         targets = orch._resolve_targets(feat)
         assert len(targets) == 1
+
+    def test_singleton_limits_to_first_match(self):
+        """singleton=True returns only the first matching host."""
+        orch = self._orch([
+            {"name": "a", "uri": "10.0.0.1", "labels": ["controller", "compute"]},
+            {"name": "b", "uri": "10.0.0.2", "labels": ["worker", "compute"]},
+            {"name": "c", "uri": "10.0.0.3", "labels": ["worker", "compute"]},
+        ])
+        feat = Feature.model_validate({"name": "f", "labels": ["compute"], "singleton": True})
+        targets = orch._resolve_targets(feat)
+        assert len(targets) == 1
+        assert targets[0].name == "a"
+
+    def test_singleton_non_singleton_differs(self):
+        """Without singleton all matching hosts are returned."""
+        orch = self._orch([
+            {"name": "a", "uri": "10.0.0.1", "labels": ["controller", "compute"]},
+            {"name": "b", "uri": "10.0.0.2", "labels": ["worker", "compute"]},
+        ])
+        feat = Feature.model_validate({"name": "f", "labels": ["compute"]})
+        targets = orch._resolve_targets(feat)
+        assert len(targets) == 2
+
+    def test_singleton_with_sole_absorption(self):
+        """singleton=True also limits absorbed sole targets to one."""
+        orch = self._orch([
+            {"name": "c1", "uri": "10.0.0.1", "labels": ["controller"]},
+            {"name": "c2", "uri": "10.0.0.2", "labels": ["controller"]},
+        ])
+        feat = Feature.model_validate({"name": "f", "labels": ["exotic"], "singleton": True})
+        targets = orch._resolve_targets(feat)
+        assert len(targets) == 1
+        assert targets[0].name == "c1"
+
+    def test_singleton_with_no_match_returns_empty(self):
+        """singleton=True on a feature with no matches returns empty list."""
+        orch = self._orch([
+            {"name": "c", "uri": "10.0.0.1", "labels": ["controller"], "no-sole": True},
+        ])
+        feat = Feature.model_validate({"name": "f", "labels": ["gpu"], "singleton": True})
+        assert orch._resolve_targets(feat) == []
 
 
 class TestRunParallel:

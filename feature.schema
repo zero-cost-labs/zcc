@@ -43,6 +43,21 @@ labels:
     Required for inline feature definitions.  May be omitted when `uri` is
     provided and the referenced file contains the labels.
 
+singleton:
+  type: boolean
+  arity: 0..1
+  description: |
+    When true, the feature is deployed to exactly one matching node
+    (the first in cluster-definition order) instead of every node that
+    carries a matching label.
+
+    Use this for features that must run as a single instance across the
+    cluster — for example a shared database, a unique message broker, or
+    any workload where running on multiple nodes simultaneously would
+    cause conflicts or data duplication.
+
+    Defaults to false (feature is deployed to all matching nodes).
+
 locations:
   type: uri
   arity: 0..*
