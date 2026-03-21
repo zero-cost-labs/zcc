@@ -199,6 +199,22 @@ class TestFeature:
         )
         assert feat.locations == ["./charts/app"]
 
+    def test_singleton_default_false(self):
+        feat = Feature.model_validate({"name": "app", "labels": ["worker"]})
+        assert feat.singleton is False
+
+    def test_singleton_true(self):
+        feat = Feature.model_validate(
+            {"name": "db", "labels": ["storage"], "singleton": True}
+        )
+        assert feat.singleton is True
+
+    def test_singleton_false_explicit(self):
+        feat = Feature.model_validate(
+            {"name": "app", "labels": ["compute"], "singleton": False}
+        )
+        assert feat.singleton is False
+
     # ------------------------------------------------------------------
     # URI-reference form
     # ------------------------------------------------------------------

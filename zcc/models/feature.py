@@ -12,6 +12,12 @@ class Feature(BaseModel):
     Reserved labels (``controller``, ``worker``, ``sole``) may be used here
     to target nodes by their k0s role.
 
+    When ``singleton`` is ``True`` the feature is deployed to exactly **one**
+    of the matching nodes (the first in cluster-definition order) instead of
+    all matching nodes.  This is useful for features that must run on a
+    single node — for example a shared database or a unique message broker —
+    where deploying to every labelled host would create duplicates.
+
     Features may be specified in three ways inside a cluster definition:
 
     * **Inline** — all fields provided directly in the cluster YAML.
@@ -30,6 +36,7 @@ class Feature(BaseModel):
     name: str | None = None
     uri: str | None = None
     labels: list[str] = []
+    singleton: bool = False
     locations: list[str] = []
     install_cmds: list[str] = Field(default=[], alias="install-cmds")
     init_cmds: list[str] = Field(default=[], alias="init-cmds")

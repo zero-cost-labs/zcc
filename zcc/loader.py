@@ -15,6 +15,31 @@ class ConfigError(Exception):
     """Raised when a cluster configuration file is invalid."""
 
 
+def _merge_labels(file_labels: list, inline_labels: list) -> list:
+    """Merge inline labels onto a base label list from a feature file.
+
+    Inline labels are **appended** to the file's labels.  A label that
+    starts with ``"-"`` removes the corresponding label (without the
+    prefix) from the inherited set rather than adding a new one.
+
+    Parameters
+    ----------
+    file_labels:
+        Labels declared in the external feature file.
+    inline_labels:
+        Labels declared in the cluster-level entry for the feature.
+
+    Returns
+    -------
+    list
+        Merged label list: ``file_labels`` minus any negations, plus
+        any additions, preserving order.
+    """
+    negated = {lbl[1:] for lbl in inline_labels if lbl.startswith("-")}
+    additions = [lbl for lbl in inline_labels if not lbl.startswith("-")]
+    return [lbl for lbl in file_labels if lbl not in negated] + additions
+
+
 def _resolve_feature_refs(
     features: list[Any], base_dir: Path
 ) -> list[dict]:
@@ -28,6 +53,12 @@ def _resolve_feature_refs(
     * **By name** — has ``name`` but no ``labels`` and no ``uri``; the file
       ``<base_dir>/features/<name>.yaml`` is loaded and merged with the
       inline entry.
+
+    For entries resolved from an external file, **labels are merged**
+    rather than replaced: inline labels are appended to the file's labels.
+    A label that starts with ``"-"`` removes the corresponding label from
+    the inherited set (e.g. ``"-worker"`` removes ``"worker"``).  All
+    other inline fields still fully override their file counterparts.
 
     Parameters
     ----------
@@ -90,7 +121,14 @@ def _resolve_feature_refs(
             )
 
         # Merge: file provides defaults; inline fields take precedence.
+        # Exception: labels are appended (not replaced); a label starting
+        # with "-" removes the matching label from the file's list.
         merged = {**file_data, **entry}
+        inline_labels: list | None = entry.get("labels")
+        if inline_labels is not None:
+            merged["labels"] = _merge_labels(
+                list(file_data.get("labels", [])), inline_labels
+            )
         resolved.append(merged)
 
     return resolved

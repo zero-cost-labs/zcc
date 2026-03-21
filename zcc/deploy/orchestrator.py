@@ -134,7 +134,8 @@ class DeployOrchestrator:
                 if (not has_explicit and targets)
                 else ""
             )
-            lines.append(f"  {feature.name} \u2192 {target_names}{suffix}")
+            singleton_note = "  [singleton]" if feature.singleton else ""
+            lines.append(f"  {feature.name} \u2192 {target_names}{suffix}{singleton_note}")
 
         return lines
 
@@ -196,15 +197,22 @@ class DeployOrchestrator:
 
         **Label absorption**: when no host explicitly carries a matching label,
         sole nodes act as the catch-all fallback and receive the feature.
+
+        **Singleton**: when ``feature.singleton`` is ``True`` only the first
+        matching host (in cluster-definition order) is returned.
         """
         feature_labels = set(feature.labels)
         explicit_matches = [
             h for h in self.cluster.hosts if set(h.labels) & feature_labels
         ]
         if explicit_matches:
-            return explicit_matches
-        # No explicit match → fall back to sole nodes.
-        return self._sole_hosts()
+            targets = explicit_matches
+        else:
+            # No explicit match → fall back to sole nodes.
+            targets = self._sole_hosts()
+        if feature.singleton:
+            return targets[:1]
+        return targets
 
     def _install_k0s_on(self, host: Host) -> None:
         with SSHClient(host) as ssh:
