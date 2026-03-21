@@ -332,6 +332,22 @@ class TestCluster:
                 }
             )
 
+    def test_duplicate_feature_uris_fail(self):
+        """Two URI-only entries pointing to the same file must be rejected."""
+        with pytest.raises(ValidationError):
+            Cluster.model_validate(
+                {
+                    "name": "dup-uri",
+                    "hosts": [
+                        {"name": "c", "uri": "10.0.0.1", "labels": ["controller"]}
+                    ],
+                    "features": [
+                        {"uri": "./features/monitoring.yaml"},
+                        {"uri": "./features/monitoring.yaml"},
+                    ],
+                }
+            )
+
     def test_non_controller_host_with_custom_labels_only(self):
         """Non-controller nodes need no reserved labels; they're workers by topology."""
         cluster = Cluster.model_validate(
