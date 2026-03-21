@@ -27,3 +27,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: mark test as requiring live infrastructure (skipped in normal runs)",
+]
+addopts = "-m 'not integration'"

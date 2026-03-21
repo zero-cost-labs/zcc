@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from .backend import ClusterBackend
@@ -21,6 +22,9 @@ _K0S_START = "sudo k0s start"
 _K0S_STATUS = "sudo k0s status"
 _CONTROLLER_TOKEN_PATH = "/tmp/k0s-controller-token"
 _WORKER_TOKEN_PATH = "/tmp/k0s-worker-token"
+
+# How long (seconds) to wait for the k0s API server to become ready after start.
+_K0S_READY_TIMEOUT = 120
 
 
 class K0sError(SSHError):
@@ -80,6 +84,7 @@ class K0sInstaller(ClusterBackend):
         if enable_workers:
             self.enable_worker_scheduling(ssh)
 
+        self._wait_for_ready(ssh)
         logger.info("[%s] Generating controller and worker join-tokens", ssh.host.uri)
         controller_token = ssh.run_checked("sudo k0s token create --role=controller")
         worker_token = ssh.run_checked("sudo k0s token create --role=worker")
@@ -141,3 +146,42 @@ class K0sInstaller(ClusterBackend):
         if code != 0:
             return f"k0s not running or not installed ({err.strip()})"
         return out.strip()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _wait_for_ready(
+        self, ssh: SSHClient, *, timeout: int = _K0S_READY_TIMEOUT
+    ) -> None:
+        """Poll the k0s API until the controller is ready to serve requests.
+
+        After ``k0s start`` the controller needs up to ~60 s to initialise
+        etcd and bring the API server online.  Attempting ``k0s token create``
+        before it is ready returns an error, so we wait here.
+
+        Parameters
+        ----------
+        ssh:
+            Open SSH connection to the controller node.
+        timeout:
+            Maximum number of seconds to wait before raising
+            :exc:`K0sError`.
+        """
+        logger.info(
+            "[%s] Waiting for k0s API to become ready (up to %ds)",
+            ssh.host.uri,
+            timeout,
+        )
+        deadline = time.monotonic() + timeout
+        while True:
+            code, _, _ = ssh.run("sudo k0s kubectl get nodes")
+            if code == 0:
+                logger.info("[%s] k0s API is ready", ssh.host.uri)
+                return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(5)
+        raise K0sError(
+            f"k0s API on {ssh.host.uri} did not become ready within {timeout}s"
+        )

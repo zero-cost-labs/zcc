@@ -65,6 +65,7 @@ class TestK0sInstaller:
             "controller-token\n",
             "worker-token\n",
         ]
+        ssh.run.return_value = (0, "", "")  # k0s kubectl get nodes succeeds
 
         ctl, wrk = K0sInstaller().init_controller(ssh)
 
@@ -89,6 +90,7 @@ class TestK0sInstaller:
             "controller-token\n",
             "worker-token\n",
         ]
+        ssh.run.return_value = (0, "", "")  # k0s kubectl get nodes succeeds
 
         K0sInstaller().init_controller(ssh, enable_workers=True)
 
@@ -112,6 +114,42 @@ class TestK0sInstaller:
                 call("sudo k0s start"),
             ]
         )
+
+    def test_wait_for_ready_succeeds_on_first_poll(self):
+        """_wait_for_ready returns immediately when kubectl get nodes succeeds."""
+        ssh = MagicMock()
+        ssh.host.uri = "10.0.0.1"
+        ssh.run.return_value = (0, "", "")
+
+        K0sInstaller()._wait_for_ready(ssh)
+
+        ssh.run.assert_called_once_with("sudo k0s kubectl get nodes")
+
+    def test_wait_for_ready_retries_then_succeeds(self):
+        """_wait_for_ready retries on failure and returns once kubectl succeeds."""
+        ssh = MagicMock()
+        ssh.host.uri = "10.0.0.1"
+        ssh.run.side_effect = [
+            (1, "", "connection refused"),
+            (1, "", "connection refused"),
+            (0, "", ""),
+        ]
+
+        K0sInstaller()._wait_for_ready(ssh)
+
+        assert ssh.run.call_count == 3
+
+    def test_wait_for_ready_raises_after_timeout(self):
+        """_wait_for_ready raises K0sError when the timeout expires."""
+        from zcc.deploy.k0s import K0sError
+
+        ssh = MagicMock()
+        ssh.host.uri = "10.0.0.1"
+        # Always returns failure so the timeout is guaranteed to expire.
+        ssh.run.return_value = (1, "", "not ready")
+
+        with pytest.raises(K0sError, match="did not become ready"):
+            K0sInstaller()._wait_for_ready(ssh, timeout=1)
 
 
 class TestDeployOrchestratorControllerJoin:

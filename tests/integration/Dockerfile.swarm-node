@@ -1,0 +1,43 @@
+# Docker Swarm integration-test node
+#
+# Ubuntu 22.04 with Docker Engine pre-installed and OpenSSH.
+# Run with:
+#   docker run --privileged -d <image>
+#
+# The DockerSwarmBackend.install() re-runs the Docker install script (idempotent)
+# and adds the SSH user to the docker group.  Docker daemon is started by the
+# container entrypoint so it is available for the swarm commands that follow.
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install base dependencies and Docker Engine
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates \
+       curl \
+       gnupg \
+       openssh-server \
+       sudo \
+    && curl -fsSL https://get.docker.com | sh \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create the 'ci' user with passwordless sudo.
+# Pre-add to the docker group so the group is present before the backend's
+# usermod runs; the backend's call is idempotent.
+RUN useradd -m -s /bin/bash ci \
+    && echo "ci ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers \
+    && usermod -aG docker ci
+
+# Configure OpenSSH: disable password auth, enable pubkey auth
+RUN mkdir -p /run/sshd \
+    && ssh-keygen -A \
+    && sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config \
+    && sed -i 's/^#\?PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+
+EXPOSE 22
+
+COPY swarm-node-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]

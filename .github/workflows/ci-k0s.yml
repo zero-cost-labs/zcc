@@ -1,0 +1,141 @@
+name: "Integration Test — k0s Backend"
+
+# Trigger manually or on pushes to the dedicated k0s integration branch.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ci/k0s-integration
+
+permissions:
+  contents: read
+
+jobs:
+  k0s-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      # ------------------------------------------------------------------ #
+      # Setup                                                                #
+      # ------------------------------------------------------------------ #
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install zcc and test dependencies
+        run: pip install -e ".[dev]"
+
+      # ------------------------------------------------------------------ #
+      # SSH key                                                              #
+      # ------------------------------------------------------------------ #
+      - name: Generate ephemeral SSH key pair
+        run: ssh-keygen -t ed25519 -f /tmp/zcc_ci_key -N ""
+
+      # ------------------------------------------------------------------ #
+      # Container cluster                                                    #
+      # ------------------------------------------------------------------ #
+      - name: Create isolated Docker network
+        run: docker network create zcc-k0s
+
+      - name: Build k0s test-node image (Ubuntu 22.04 + systemd)
+        run: |
+          docker build \
+            -f tests/integration/Dockerfile.k0s-node \
+            -t zcc-k0s-node \
+            tests/integration/
+
+      # k0s needs:
+      #   --privileged       — to install kernel modules and manage iptables
+      #   --cgroupns=host    — share the host cgroup namespace for systemd
+      #   /sys/fs/cgroup rw  — allow systemd to manage cgroups inside the container
+      - name: Start k0s containers (controller + 2 workers, with systemd)
+        run: |
+          for name in k0s-controller k0s-worker-1 k0s-worker-2; do
+            docker run -d \
+              --name "$name" \
+              --network zcc-k0s \
+              --privileged \
+              --cgroupns=host \
+              -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+              zcc-k0s-node
+          done
+
+      - name: Wait for SSH to become available on all nodes
+        run: |
+          mkdir -p ~/.ssh
+          for name in k0s-controller k0s-worker-1 k0s-worker-2; do
+            ip=$(docker inspect \
+              -f '{{(index .NetworkSettings.Networks "zcc-k0s").IPAddress}}' \
+              "$name")
+            echo "Waiting for SSH on $name ($ip)..."
+            for i in $(seq 1 30); do
+              if ssh-keyscan -H "$ip" >> ~/.ssh/known_hosts 2>/dev/null; then
+                echo "  $name is reachable"
+                break
+              fi
+              sleep 2
+            done
+          done
+
+      - name: Inject SSH public key into containers
+        run: |
+          PUBKEY=$(cat /tmp/zcc_ci_key.pub)
+          for name in k0s-controller k0s-worker-1 k0s-worker-2; do
+            docker exec "$name" bash -c "
+              mkdir -p /home/ci/.ssh
+              echo '$PUBKEY' > /home/ci/.ssh/authorized_keys
+              chmod 700 /home/ci/.ssh
+              chmod 600 /home/ci/.ssh/authorized_keys
+              chown -R ci:ci /home/ci/.ssh
+            "
+          done
+
+      - name: Export container IPs to environment
+        run: |
+          echo "ZCC_CTRL_IP=$(docker inspect \
+            -f '{{(index .NetworkSettings.Networks "zcc-k0s").IPAddress}}' \
+            k0s-controller)" >> "$GITHUB_ENV"
+          echo "ZCC_WORKER1_IP=$(docker inspect \
+            -f '{{(index .NetworkSettings.Networks "zcc-k0s").IPAddress}}' \
+            k0s-worker-1)" >> "$GITHUB_ENV"
+          echo "ZCC_WORKER2_IP=$(docker inspect \
+            -f '{{(index .NetworkSettings.Networks "zcc-k0s").IPAddress}}' \
+            k0s-worker-2)" >> "$GITHUB_ENV"
+          echo "ZCC_SSH_KEY=/tmp/zcc_ci_key" >> "$GITHUB_ENV"
+
+      # ------------------------------------------------------------------ #
+      # Integration test                                                     #
+      # ------------------------------------------------------------------ #
+      - name: Run k0s integration test
+        run: pytest tests/integration/test_k0s_real.py -v -m integration
+
+      # ------------------------------------------------------------------ #
+      # Diagnostics (failure only)                                          #
+      # ------------------------------------------------------------------ #
+      - name: Collect k0s state on failure
+        if: failure()
+        run: |
+          echo "=== k0s-controller: k0s status ==="
+          docker exec k0s-controller sudo k0s status || true
+          echo ""
+          echo "=== k0s-controller: kubectl get nodes ==="
+          docker exec k0s-controller sudo k0s kubectl get nodes || true
+          echo ""
+          for name in k0s-worker-1 k0s-worker-2; do
+            echo "=== $name: k0s status ==="
+            docker exec "$name" sudo k0s status || true
+          done
+
+      # ------------------------------------------------------------------ #
+      # Cleanup                                                              #
+      # ------------------------------------------------------------------ #
+      - name: Cleanup containers and network
+        if: always()
+        run: |
+          docker rm -f k0s-controller k0s-worker-1 k0s-worker-2 || true
+          docker network rm zcc-k0s || true

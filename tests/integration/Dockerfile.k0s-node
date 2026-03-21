@@ -1,0 +1,53 @@
+# k0s integration-test node
+#
+# Ubuntu 22.04 with systemd as PID 1 and OpenSSH.
+# systemd is required because K0sInstaller.init_controller() uses
+# `k0s install controller` + `k0s start`, which rely on the host's
+# service manager.
+#
+# Run with:
+#   docker run --privileged --cgroupns=host \
+#              -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+#              -d <image>
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install systemd and SSH prerequisites
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       systemd \
+       systemd-sysv \
+       openssh-server \
+       sudo \
+       curl \
+       iptables \
+       iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Mask units that do not work correctly inside containers
+RUN systemctl mask \
+    getty@tty1.service \
+    getty@tty2.service \
+    getty@tty3.service \
+    systemd-logind.service \
+    systemd-udevd.service \
+    apt-daily.timer \
+    apt-daily-upgrade.timer
+
+# Create the 'ci' user with passwordless sudo
+RUN useradd -m -s /bin/bash ci \
+    && echo "ci ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Configure OpenSSH: disable password auth, enable pubkey auth, enable at boot
+RUN mkdir -p /run/sshd \
+    && ssh-keygen -A \
+    && sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config \
+    && sed -i 's/^#\?PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config \
+    && systemctl enable ssh
+
+EXPOSE 22
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

@@ -1,0 +1,135 @@
+name: "Integration Test — Docker Swarm Backend"
+
+# Trigger manually or on pushes to the dedicated swarm integration branch.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ci/swarm-integration
+
+permissions:
+  contents: read
+
+jobs:
+  swarm-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ------------------------------------------------------------------ #
+      # Setup                                                                #
+      # ------------------------------------------------------------------ #
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install zcc and test dependencies
+        run: pip install -e ".[dev]"
+
+      # ------------------------------------------------------------------ #
+      # SSH key                                                              #
+      # ------------------------------------------------------------------ #
+      - name: Generate ephemeral SSH key pair
+        run: ssh-keygen -t ed25519 -f /tmp/zcc_ci_key -N ""
+
+      # ------------------------------------------------------------------ #
+      # Container cluster                                                    #
+      # ------------------------------------------------------------------ #
+      - name: Create isolated Docker network
+        run: docker network create zcc-swarm
+
+      - name: Build Swarm test-node image
+        run: |
+          docker build \
+            -f tests/integration/Dockerfile.swarm-node \
+            -t zcc-swarm-node \
+            tests/integration/
+
+      - name: Start swarm containers (manager + 2 workers)
+        run: |
+          for name in swarm-manager swarm-worker-1 swarm-worker-2; do
+            docker run -d \
+              --name "$name" \
+              --network zcc-swarm \
+              --privileged \
+              zcc-swarm-node
+          done
+
+      - name: Wait for SSH to become available on all nodes
+        run: |
+          mkdir -p ~/.ssh
+          for name in swarm-manager swarm-worker-1 swarm-worker-2; do
+            ip=$(docker inspect \
+              -f '{{(index .NetworkSettings.Networks "zcc-swarm").IPAddress}}' \
+              "$name")
+            echo "Waiting for SSH on $name ($ip)..."
+            for i in $(seq 1 30); do
+              if ssh-keyscan -H "$ip" >> ~/.ssh/known_hosts 2>/dev/null; then
+                echo "  $name is reachable"
+                break
+              fi
+              sleep 2
+            done
+          done
+
+      - name: Inject SSH public key into containers
+        run: |
+          PUBKEY=$(cat /tmp/zcc_ci_key.pub)
+          for name in swarm-manager swarm-worker-1 swarm-worker-2; do
+            docker exec "$name" bash -c "
+              mkdir -p /home/ci/.ssh
+              echo '$PUBKEY' > /home/ci/.ssh/authorized_keys
+              chmod 700 /home/ci/.ssh
+              chmod 600 /home/ci/.ssh/authorized_keys
+              chown -R ci:ci /home/ci/.ssh
+            "
+          done
+
+      - name: Export container IPs to environment
+        run: |
+          echo "ZCC_MANAGER_IP=$(docker inspect \
+            -f '{{(index .NetworkSettings.Networks "zcc-swarm").IPAddress}}' \
+            swarm-manager)" >> "$GITHUB_ENV"
+          echo "ZCC_WORKER1_IP=$(docker inspect \
+            -f '{{(index .NetworkSettings.Networks "zcc-swarm").IPAddress}}' \
+            swarm-worker-1)" >> "$GITHUB_ENV"
+          echo "ZCC_WORKER2_IP=$(docker inspect \
+            -f '{{(index .NetworkSettings.Networks "zcc-swarm").IPAddress}}' \
+            swarm-worker-2)" >> "$GITHUB_ENV"
+          echo "ZCC_SSH_KEY=/tmp/zcc_ci_key" >> "$GITHUB_ENV"
+
+      # ------------------------------------------------------------------ #
+      # Integration test                                                     #
+      # ------------------------------------------------------------------ #
+      - name: Run Docker Swarm integration test
+        run: pytest tests/integration/test_swarm_real.py -v -m integration
+
+      # ------------------------------------------------------------------ #
+      # Diagnostics (failure only)                                          #
+      # ------------------------------------------------------------------ #
+      - name: Collect swarm state on failure
+        if: failure()
+        run: |
+          echo "=== swarm-manager: docker info ==="
+          docker exec swarm-manager docker info || true
+          echo ""
+          echo "=== swarm-manager: docker node ls ==="
+          docker exec swarm-manager docker node ls || true
+          echo ""
+          for name in swarm-manager swarm-worker-1 swarm-worker-2; do
+            echo "=== $name: docker swarm state ==="
+            docker exec "$name" docker info --format '{{.Swarm.LocalNodeState}}' || true
+          done
+
+      # ------------------------------------------------------------------ #
+      # Cleanup                                                              #
+      # ------------------------------------------------------------------ #
+      - name: Cleanup containers and network
+        if: always()
+        run: |
+          docker rm -f swarm-manager swarm-worker-1 swarm-worker-2 || true
+          docker network rm zcc-swarm || true
