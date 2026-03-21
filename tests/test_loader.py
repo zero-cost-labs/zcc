@@ -159,8 +159,8 @@ class TestFeatureRefResolution:
         assert cluster.features[0].name == "my-prometheus"
         assert "monitoring" in cluster.features[0].labels
 
-    def test_inline_labels_override_file_labels(self, tmp_path):
-        """When a URI entry also specifies labels, they override the file's labels."""
+    def test_inline_labels_appended_to_file_labels(self, tmp_path):
+        """Inline labels are appended to the file's labels, not replacing them."""
         feat_file = tmp_path / "base-feature.yaml"
         feat_file.write_text(
             "name: base\n"
@@ -180,7 +180,53 @@ class TestFeatureRefResolution:
             "    labels: [gpu]\n"
         )
         cluster = load_cluster(cfg)
-        assert cluster.features[0].labels == ["gpu"]
+        assert cluster.features[0].labels == ["worker", "gpu"]
+
+    def test_inline_label_negation_removes_file_label(self, tmp_path):
+        """A label starting with '-' removes the matching label from the file."""
+        feat_file = tmp_path / "base-feature.yaml"
+        feat_file.write_text(
+            "name: base\n"
+            "labels: [worker, storage]\n"
+            "install-cmds:\n"
+            "  - echo install\n"
+        )
+        cfg = tmp_path / "cluster.yaml"
+        cfg.write_text(
+            "name: test\n"
+            "hosts:\n"
+            "  - name: ctrl\n"
+            "    uri: 10.0.0.1\n"
+            "    labels: [controller]\n"
+            "features:\n"
+            "  - uri: " + str(feat_file) + "\n"
+            "    labels: [-worker]\n"
+        )
+        cluster = load_cluster(cfg)
+        assert cluster.features[0].labels == ["storage"]
+
+    def test_inline_labels_append_and_negate_mixed(self, tmp_path):
+        """Labels can be added and removed in the same cluster-level entry."""
+        feat_file = tmp_path / "base-feature.yaml"
+        feat_file.write_text(
+            "name: base\n"
+            "labels: [worker, storage, compute]\n"
+            "install-cmds:\n"
+            "  - echo install\n"
+        )
+        cfg = tmp_path / "cluster.yaml"
+        cfg.write_text(
+            "name: test\n"
+            "hosts:\n"
+            "  - name: ctrl\n"
+            "    uri: 10.0.0.1\n"
+            "    labels: [controller]\n"
+            "features:\n"
+            "  - uri: " + str(feat_file) + "\n"
+            "    labels: [-storage, gpu]\n"
+        )
+        cluster = load_cluster(cfg)
+        assert cluster.features[0].labels == ["worker", "compute", "gpu"]
 
     def test_uri_reference_missing_file_raises_config_error(self, tmp_path):
         """A URI reference to a non-existent file raises ConfigError."""
