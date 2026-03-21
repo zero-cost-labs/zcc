@@ -55,28 +55,41 @@ Before running `zcc deploy`, every target node must satisfy two conditions:
    auth is strongly recommended.
 
 2. **Passwordless sudo** — both the k0s and Docker Swarm backends issue
-   privileged commands (binary install, service registration, network
-   configuration) using `sudo`.  The SSH user must be able to run `sudo` without
-   a password prompt.  A minimal `/etc/sudoers.d/` drop-in is the standard way to
-   configure this:
+   privileged commands using `sudo`.  The SSH user must be able to run `sudo`
+   without a password prompt.  Create a `/etc/sudoers.d/` drop-in that
+   permits only the exact commands `zcc` issues:
 
+   **Docker Swarm backend**
+
+   ```sudoers
+   # /etc/sudoers.d/zcc-docker-swarm
+   # Docker Engine upstream installer (curl … | sudo sh)
+   ubuntu ALL=(ALL) NOPASSWD: /bin/sh
+   # Post-install: add the SSH user to the docker group
+   ubuntu ALL=(ALL) NOPASSWD: /usr/sbin/usermod
    ```
-   # /etc/sudoers.d/zcc
-   ubuntu ALL=(ALL) NOPASSWD: ALL
+
+   After `install` completes and the next SSH connection is opened, the user is
+   a member of the `docker` group, so no further `sudo` is needed for Docker
+   Swarm commands (`swarm init`, `swarm join`, `docker info`, …).
+
+   **k0s backend**
+
+   ```sudoers
+   # /etc/sudoers.d/zcc-k0s
+   # k0s upstream installer (curl … | sudo sh)
+   ubuntu ALL=(ALL) NOPASSWD: /bin/sh
+   # All k0s lifecycle operations (install, start, token create, kubectl, status)
+   ubuntu ALL=(ALL) NOPASSWD: /usr/local/bin/k0s
    ```
 
-   Replace `ubuntu` with the SSH user configured in your cluster YAML.
+   k0s requires root for every lifecycle operation (service install, start,
+   token generation, taint removal, status).  Running k0s as a non-root user is
+   an [open upstream feature request](https://github.com/k0sproject/k0s/issues/5910)
+   with no supported workaround at this time.
 
-   > **Note — Docker Swarm**: `install` adds the SSH user to the `docker` group
-   > (`sudo usermod -aG docker <user>`), so all subsequent Docker Swarm commands
-   > (`swarm init`, `swarm join`, `docker info`) run without `sudo` once the
-   > install step has completed and a fresh SSH connection has been opened.
-   >
-   > **Note — k0s**: k0s requires root for every lifecycle operation (service
-   > install, start, kubectl, token generation, taint removal).  Running k0s as a
-   > non-root user is an [open upstream feature request](https://github.com/k0sproject/k0s/issues/5910)
-   > with no supported workaround at this time.  Passwordless sudo is therefore a
-   > firm prerequisite for k0s clusters.
+   Replace `ubuntu` with the SSH user configured in your cluster YAML in both
+   files.
 
 ### 1. Write a cluster config
 
