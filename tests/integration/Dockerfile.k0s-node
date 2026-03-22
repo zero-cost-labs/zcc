@@ -41,7 +41,10 @@ RUN systemctl mask \
 # regardless of runtime network conditions.  The orchestrator's install() step
 # still runs the upstream installer script, but if it fails (e.g. DNS issues
 # inside the isolated CI network) the pre-installed binary is used instead.
-RUN curl -sSLf https://get.k0s.sh | sh -e
+# Download to a temp file first so a curl failure fails the build loudly.
+RUN curl -sSLf https://get.k0s.sh -o /tmp/k0s-install.sh \
+    && sh /tmp/k0s-install.sh \
+    && rm /tmp/k0s-install.sh
 
 # Create the 'ci' user with the exact sudoers permissions required by k0s
 # (mirrors the drop-in documented in README.md "Node prerequisites").
