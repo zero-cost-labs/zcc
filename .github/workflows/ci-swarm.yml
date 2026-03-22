@@ -6,6 +6,7 @@ on:
   push:
     branches:
       - ci/swarm-integration
+      - copilot/poc-test-deployment-backends
 
 permissions:
   contents: read
