@@ -36,6 +36,12 @@ RUN systemctl mask \
     apt-daily.timer \
     apt-daily-upgrade.timer
 
+# Pre-install the k0s binary so it is always available at /usr/local/bin/k0s
+# regardless of runtime network conditions.  The orchestrator's install() step
+# still runs the upstream installer script, but if it fails (e.g. DNS issues
+# inside the isolated CI network) the pre-installed binary is used instead.
+RUN curl -sSLf https://get.k0s.sh | sh
+
 # Create the 'ci' user with the exact sudoers permissions required by k0s
 # (mirrors the drop-in documented in README.md "Node prerequisites").
 RUN useradd -m -s /bin/bash ci \
