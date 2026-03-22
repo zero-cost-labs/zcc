@@ -36,9 +36,12 @@ RUN systemctl mask \
     apt-daily.timer \
     apt-daily-upgrade.timer
 
-# Create the 'ci' user with passwordless sudo
+# Create the 'ci' user with the exact sudoers permissions required by k0s
+# (mirrors the drop-in documented in README.md "Node prerequisites").
 RUN useradd -m -s /bin/bash ci \
-    && echo "ci ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+    && printf '# k0s upstream installer (curl … | sudo sh)\nci ALL=(ALL) NOPASSWD: /bin/sh\n# All k0s lifecycle operations (install, start, token create, kubectl, status)\nci ALL=(ALL) NOPASSWD: /usr/local/bin/k0s\n' \
+       > /etc/sudoers.d/zcc-k0s \
+    && chmod 0440 /etc/sudoers.d/zcc-k0s
 
 # Configure OpenSSH: disable password auth, enable pubkey auth, enable at boot
 RUN mkdir -p /run/sshd \
