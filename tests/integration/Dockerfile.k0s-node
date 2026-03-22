@@ -22,6 +22,7 @@ RUN apt-get update \
        openssh-server \
        sudo \
        curl \
+       ca-certificates \
        iptables \
        iproute2 \
     && rm -rf /var/lib/apt/lists/*
@@ -40,7 +41,7 @@ RUN systemctl mask \
 # regardless of runtime network conditions.  The orchestrator's install() step
 # still runs the upstream installer script, but if it fails (e.g. DNS issues
 # inside the isolated CI network) the pre-installed binary is used instead.
-RUN curl -sSLf https://get.k0s.sh | sh
+RUN curl -sSLf https://get.k0s.sh | sh -e
 
 # Create the 'ci' user with the exact sudoers permissions required by k0s
 # (mirrors the drop-in documented in README.md "Node prerequisites").
