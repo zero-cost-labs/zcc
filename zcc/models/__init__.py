@@ -1,5 +1,6 @@
 """Models package for zcc."""
 
+from .backend import BackendConfig
 from .cluster import Cluster
 from .feature import Feature
 from .host import (
@@ -16,6 +17,7 @@ from .host import (
 )
 
 __all__ = [
+    "BackendConfig",
     "Cluster",
     "Feature",
     "Host",
