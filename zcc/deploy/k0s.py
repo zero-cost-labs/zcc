@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import shlex
 import time
 from typing import TYPE_CHECKING
 
@@ -10,6 +12,7 @@ from .backend import ClusterBackend
 from .ssh import SSHClient, SSHError
 
 if TYPE_CHECKING:
+    from ..models.backend import BackendConfig
     from ..models.host import Host
 
 logger = logging.getLogger(__name__)
@@ -31,6 +34,13 @@ _K0S_CONFIG_PATH = "/etc/k0s/k0s.yaml"
 # How long (seconds) to wait for the k0s API server to become ready after start.
 _K0S_READY_TIMEOUT = 120
 
+# Mapping of logical BackendConfig.config_files key → remote destination path.
+# Keys not listed here are silently ignored by K0sInstaller (other backends
+# may recognise them as stated in the schema description).
+_K0S_KNOWN_CONFIG_FILES: dict[str, str] = {
+    "k0s.yaml": _K0S_CONFIG_PATH,
+}
+
 
 class K0sError(SSHError):
     """Raised when a k0s operation fails."""
@@ -47,20 +57,85 @@ class K0sInstaller(ClusterBackend):
        controller and worker join-tokens.
     3. Join additional controllers with the controller token.
     4. Join all worker nodes using the worker token.
+
+    Parameters
+    ----------
+    config:
+        Optional :class:`~zcc.models.backend.BackendConfig` from the cluster
+        definition.  When provided, any ``config_files`` entries recognised by
+        this backend (currently only ``k0s.yaml``) are uploaded to their
+        well-known remote paths during :meth:`install`, and ``arguments`` are
+        appended to every ``k0s install controller/worker`` invocation.
     """
+
+    def __init__(self, config: "BackendConfig | None" = None) -> None:
+        from ..models.backend import BackendConfig as _BackendConfig
+
+        self._cfg = config if config is not None else _BackendConfig()
 
     # ------------------------------------------------------------------
     # Binary installation
     # ------------------------------------------------------------------
 
     def install(self, ssh: SSHClient) -> None:
-        """Download and install the k0s binary on the remote host."""
+        """Download and install the k0s binary on the remote host.
+
+        After installing the binary, any config files declared in
+        :attr:`BackendConfig.config_files` that are recognised by this backend
+        are uploaded to their well-known remote paths so that subsequent
+        ``k0s install controller/worker`` invocations can pick them up.
+        """
         logger.info("[%s] Installing k0s binary", ssh.host.uri)
         ssh.run_checked(_K0S_INSTALL_SCRIPT)
+        self._upload_config_files(ssh)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _upload_config_files(self, ssh: SSHClient) -> None:
+        """Upload recognised config files from :class:`BackendConfig` to the remote.
+
+        Each entry in :attr:`BackendConfig.config_files` whose key appears in
+        :data:`_K0S_KNOWN_CONFIG_FILES` is written to the corresponding remote
+        path.  The value may be either raw file content (inline YAML / TOML
+        block scalar) or a local filesystem path; if the string resolves to an
+        existing local file its contents are read and forwarded.
+
+        Because well-known paths like ``/etc/k0s/k0s.yaml`` require root
+        privileges, the content is first written to a temporary path via SFTP
+        and then moved with ``sudo``.
+        """
+        for name, remote_path in _K0S_KNOWN_CONFIG_FILES.items():
+            value = self._cfg.config_files.get(name)
+            if value is None:
+                continue
+
+            # Resolve local file reference vs inline content.
+            if os.path.isfile(value):
+                with open(value, encoding="utf-8") as fh:
+                    content = fh.read()
+            else:
+                content = value
+
+            tmp_path = f"/tmp/zcc-{name}.tmp"
+            remote_dir = remote_path.rsplit("/", 1)[0]
+            logger.info("[%s] Uploading %s to %s", ssh.host.uri, name, remote_path)
+            ssh.write_text(tmp_path, content)
+            ssh.run_checked(f"sudo mkdir -p {remote_dir}")
+            ssh.run_checked(f"sudo mv {tmp_path} {remote_path}")
+
+    def _extra_args(self) -> str:
+        """Return a space-prefixed CLI argument string from :attr:`BackendConfig.arguments`.
+
+        Each ``{flag: value}`` pair in ``arguments`` is rendered as ``flag value``
+        (or just ``flag`` when *value* is an empty string).  The result is ready
+        to be appended to a ``k0s install controller/worker`` command.
+        """
+        parts: list[str] = []
+        for flag, value in self._cfg.arguments.items():
+            parts.append(f"{flag} {shlex.quote(str(value))}" if value else flag)
+        return (" " + " ".join(parts)) if parts else ""
 
     def _config_flag(self, ssh: SSHClient) -> str:
         """Return a ``--config`` flag if a k0s YAML config exists on the remote.
@@ -100,7 +175,8 @@ class K0sInstaller(ClusterBackend):
         logger.info("[%s] Bootstrapping k0s controller", ssh.host.uri)
 
         config = self._config_flag(ssh)
-        ssh.run_checked(f"sudo k0s install controller{config}")
+        extra = self._extra_args()
+        ssh.run_checked(f"sudo k0s install controller{config}{extra}")
         ssh.run_checked(_K0S_START)
 
         if enable_workers:
@@ -134,8 +210,9 @@ class K0sInstaller(ClusterBackend):
         logger.info("[%s] Joining k0s cluster as controller", ssh.host.uri)
         ssh.write_text(_CONTROLLER_TOKEN_PATH, token, mode=0o600)
         config = self._config_flag(ssh)
+        extra = self._extra_args()
         ssh.run_checked(
-            f"sudo k0s install controller --token-file {_CONTROLLER_TOKEN_PATH}{config}"
+            f"sudo k0s install controller --token-file {_CONTROLLER_TOKEN_PATH}{config}{extra}"
         )
         ssh.run_checked(_K0S_START)
 
@@ -156,7 +233,8 @@ class K0sInstaller(ClusterBackend):
         """
         logger.info("[%s] Joining k0s cluster as worker", ssh.host.uri)
         ssh.write_text(_WORKER_TOKEN_PATH, token, mode=0o600)
-        ssh.run_checked(f"sudo k0s install worker --token-file {_WORKER_TOKEN_PATH}")
+        extra = self._extra_args()
+        ssh.run_checked(f"sudo k0s install worker --token-file {_WORKER_TOKEN_PATH}{extra}")
         ssh.run_checked(_K0S_START)
 
     # ------------------------------------------------------------------

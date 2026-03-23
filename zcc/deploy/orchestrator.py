@@ -55,7 +55,7 @@ class DeployOrchestrator:
         self, cluster: "Cluster", backend: ClusterBackend | None = None
     ) -> None:
         self.cluster = cluster
-        self._backend: ClusterBackend = backend if backend is not None else K0sInstaller()
+        self._backend: ClusterBackend = backend if backend is not None else K0sInstaller(cluster.backend)
         self._features = FeatureDeployer()
 
     # ------------------------------------------------------------------
