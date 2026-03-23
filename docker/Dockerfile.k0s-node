@@ -1,0 +1,89 @@
+# k0s integration-test node
+#
+# Ubuntu 22.04 with systemd as PID 1 and OpenSSH.
+# systemd is required because K0sInstaller.init_controller() uses
+# `k0s install controller` + `k0s start`, which rely on the host's
+# service manager.
+#
+# Run with:
+#   docker run --privileged --cgroupns=host \
+#              -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+#              -d <image>
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install systemd and SSH prerequisites
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       systemd \
+       systemd-sysv \
+       openssh-server \
+       sudo \
+       curl \
+       ca-certificates \
+       iptables \
+       iproute2 \
+       ipset \
+       conntrack \
+    && rm -rf /var/lib/apt/lists/*
+
+# Mask units that do not work correctly inside containers
+RUN systemctl mask \
+    getty@tty1.service \
+    getty@tty2.service \
+    getty@tty3.service \
+    systemd-logind.service \
+    systemd-udevd.service \
+    apt-daily.timer \
+    apt-daily-upgrade.timer
+
+# Pre-install the k0s binary so it is always available at /usr/local/bin/k0s
+# regardless of runtime network conditions.  The orchestrator's install() step
+# still runs the upstream installer script, but if it fails (e.g. DNS issues
+# inside the isolated CI network) the pre-installed binary is used instead.
+# Download to a temp file first so a curl failure fails the build loudly.
+RUN curl -sSLf https://get.k0s.sh -o /tmp/k0s-install.sh \
+    && sh /tmp/k0s-install.sh \
+    && rm /tmp/k0s-install.sh
+
+# Pre-configure k0s for the Docker CI environment.
+#
+# kube-router (the default k0s CNI) uses overlay=full (IPIP) by default.
+# With multiple privileged containers on the same Docker host, each container
+# would try to create an IPIP tunnel interface on the shared host network
+# namespace, causing conflicts.  Setting overlay=off switches kube-router to
+# direct BGP routing — valid because all nodes share one Docker bridge subnet.
+RUN mkdir -p /etc/k0s && cat > /etc/k0s/k0s.yaml <<'EOF'
+apiVersion: k0s.k0sproject.io/v1beta1
+kind: ClusterConfig
+metadata:
+  name: k0s
+spec:
+  network:
+    provider: kuberouter
+    kubeRouter:
+      autoMTU: true
+      extraArgs:
+        overlay: "off"
+EOF
+
+# Create the 'ci' user with the exact sudoers permissions required by k0s
+# (mirrors the drop-in documented in README.md "Node prerequisites").
+RUN useradd -m -s /bin/bash ci \
+    && printf '# k0s upstream installer (curl … | sudo sh)\nci ALL=(ALL) NOPASSWD: /bin/sh\n# All k0s lifecycle operations (install, start, token create, kubectl, status)\nci ALL=(ALL) NOPASSWD: /usr/local/bin/k0s\n' \
+       > /etc/sudoers.d/zcc-k0s \
+    && chmod 0440 /etc/sudoers.d/zcc-k0s
+
+# Configure OpenSSH: disable password auth, enable pubkey auth, enable at boot
+RUN mkdir -p /run/sshd \
+    && ssh-keygen -A \
+    && sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config \
+    && sed -i 's/^#\?PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config \
+    && systemctl enable ssh
+
+EXPOSE 22
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]
