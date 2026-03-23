@@ -43,6 +43,16 @@ jobs:
       - name: Create isolated Docker network
         run: docker network create zcc-k0s
 
+      # Allow IP-in-IP (protocol 4) and BGP (TCP 179) forwarding so kube-router
+      # can set up BGP routes even if the host's FORWARD policy is DROP.
+      # Although overlay=off is configured (disabling IPIP tunnels), these rules
+      # act as a belt-and-suspenders safety net.
+      - name: Allow k0s/kube-router network protocols on the host
+        run: |
+          sudo iptables -A FORWARD -p 4 -j ACCEPT
+          sudo iptables -A FORWARD -i zcc-k0s -j ACCEPT
+          sudo iptables -A FORWARD -o zcc-k0s -j ACCEPT
+
       - name: Build k0s test-node image (Ubuntu 22.04 + systemd)
         run: |
           docker build \
@@ -132,9 +142,15 @@ jobs:
           echo "=== k0s-controller: kubectl get pods -A ==="
           docker exec k0s-controller sudo k0s kubectl get pods -A || true
           echo ""
+          echo "=== k0s-controller: kubectl get events -n kube-system ==="
+          docker exec k0s-controller sudo k0s kubectl get events -n kube-system \
+            --sort-by='.lastTimestamp' || true
+          echo ""
           for name in k0s-worker-1 k0s-worker-2; do
             echo "=== $name: k0s status ==="
             docker exec "$name" sudo k0s status || true
+            echo "=== $name: containerd images ==="
+            docker exec "$name" sudo k0s ctr images list 2>/dev/null | head -20 || true
           done
 
       # ------------------------------------------------------------------ #

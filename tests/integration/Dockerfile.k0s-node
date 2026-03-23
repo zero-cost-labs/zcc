@@ -48,6 +48,27 @@ RUN curl -sSLf https://get.k0s.sh -o /tmp/k0s-install.sh \
     && sh /tmp/k0s-install.sh \
     && rm /tmp/k0s-install.sh
 
+# Pre-configure k0s for the Docker CI environment.
+#
+# kube-router (the default k0s CNI) uses overlay=full (IPIP) by default.
+# With multiple privileged containers on the same Docker host, each container
+# would try to create an IPIP tunnel interface on the shared host network
+# namespace, causing conflicts.  Setting overlay=off switches kube-router to
+# direct BGP routing — valid because all nodes share one Docker bridge subnet.
+RUN mkdir -p /etc/k0s && cat > /etc/k0s/k0s.yaml <<'EOF'
+apiVersion: k0s.k0sproject.io/v1beta1
+kind: ClusterConfig
+metadata:
+  name: k0s
+spec:
+  network:
+    provider: kuberouter
+    kubeRouter:
+      autoMTU: true
+      extraArgs:
+        overlay: "off"
+EOF
+
 # Create the 'ci' user with the exact sudoers permissions required by k0s
 # (mirrors the drop-in documented in README.md "Node prerequisites").
 RUN useradd -m -s /bin/bash ci \

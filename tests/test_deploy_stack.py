@@ -56,6 +56,11 @@ class TestSSHClient:
 
 
 class TestK0sInstaller:
+    # Helper: returns (1,"","") for test -f (no config), (0,"","") for everything else.
+    @staticmethod
+    def _run_no_config(cmd: str) -> tuple[int, str, str]:
+        return (1, "", "") if cmd.startswith("test -f") else (0, "", "")
+
     def test_init_controller_returns_both_tokens(self):
         ssh = MagicMock()
         ssh.host.uri = "10.0.0.1"
@@ -65,7 +70,7 @@ class TestK0sInstaller:
             "controller-token\n",
             "worker-token\n",
         ]
-        ssh.run.return_value = (0, "", "")  # k0s kubectl get nodes succeeds
+        ssh.run.side_effect = self._run_no_config
 
         ctl, wrk = K0sInstaller().init_controller(ssh)
 
@@ -90,7 +95,7 @@ class TestK0sInstaller:
             "controller-token\n",
             "worker-token\n",
         ]
-        ssh.run.return_value = (0, "", "")  # k0s kubectl get nodes succeeds
+        ssh.run.side_effect = self._run_no_config
 
         K0sInstaller().init_controller(ssh, enable_workers=True)
 
@@ -102,6 +107,7 @@ class TestK0sInstaller:
     def test_join_controller_uses_controller_token_file(self):
         ssh = MagicMock()
         ssh.host.uri = "10.0.0.2"
+        ssh.run.return_value = (1, "", "")  # test -f → config file not present
 
         K0sInstaller().join_controller(ssh, "controller-token")
 
@@ -111,6 +117,47 @@ class TestK0sInstaller:
         ssh.run_checked.assert_has_calls(
             [
                 call("sudo k0s install controller --token-file /tmp/k0s-controller-token"),
+                call("sudo k0s start"),
+            ]
+        )
+
+    def test_join_controller_uses_config_when_present(self):
+        """--config flag is appended when /etc/k0s/k0s.yaml exists on the remote."""
+        ssh = MagicMock()
+        ssh.host.uri = "10.0.0.2"
+        ssh.run.return_value = (0, "", "")  # test -f → config file present
+
+        K0sInstaller().join_controller(ssh, "controller-token")
+
+        ssh.run_checked.assert_has_calls(
+            [
+                call(
+                    "sudo k0s install controller"
+                    " --token-file /tmp/k0s-controller-token"
+                    " --config /etc/k0s/k0s.yaml"
+                ),
+                call("sudo k0s start"),
+            ]
+        )
+
+    def test_init_controller_uses_config_when_present(self):
+        """--config flag is appended when /etc/k0s/k0s.yaml exists on the remote."""
+        ssh = MagicMock()
+        ssh.host.uri = "10.0.0.1"
+        ssh.run_checked.side_effect = [
+            "",
+            "",
+            "controller-token\n",
+            "worker-token\n",
+        ]
+        # test -f → config present (0); kubectl get nodes → success (0)
+        ssh.run.return_value = (0, "", "")
+
+        K0sInstaller().init_controller(ssh)
+
+        ssh.run_checked.assert_has_calls(
+            [
+                call("sudo k0s install controller --config /etc/k0s/k0s.yaml"),
                 call("sudo k0s start"),
             ]
         )

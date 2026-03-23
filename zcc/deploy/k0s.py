@@ -23,6 +23,11 @@ _K0S_STATUS = "sudo k0s status"
 _CONTROLLER_TOKEN_PATH = "/tmp/k0s-controller-token"
 _WORKER_TOKEN_PATH = "/tmp/k0s-worker-token"
 
+# Well-known k0s configuration file path.  When present on the remote node,
+# this file is passed to every `k0s install` invocation so that cluster-level
+# settings (e.g. kube-router overlay mode) are picked up automatically.
+_K0S_CONFIG_PATH = "/etc/k0s/k0s.yaml"
+
 # How long (seconds) to wait for the k0s API server to become ready after start.
 _K0S_READY_TIMEOUT = 120
 
@@ -54,6 +59,22 @@ class K0sInstaller(ClusterBackend):
         ssh.run_checked(_K0S_INSTALL_SCRIPT)
 
     # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _config_flag(self, ssh: SSHClient) -> str:
+        """Return a ``--config`` flag if a k0s YAML config exists on the remote.
+
+        When :data:`_K0S_CONFIG_PATH` is present the file is passed to every
+        ``k0s install`` call so that cluster-level settings (e.g. kube-router
+        overlay mode) are applied.  The flag is omitted when the file does not
+        exist so that :class:`K0sInstaller` continues to work on plain nodes
+        that have no pre-configured k0s YAML.
+        """
+        code, _, _ = ssh.run(f"test -f {_K0S_CONFIG_PATH}")
+        return f" --config {_K0S_CONFIG_PATH}" if code == 0 else ""
+
+    # ------------------------------------------------------------------
     # Controller bootstrap
     # ------------------------------------------------------------------
 
@@ -78,7 +99,8 @@ class K0sInstaller(ClusterBackend):
         """
         logger.info("[%s] Bootstrapping k0s controller", ssh.host.uri)
 
-        ssh.run_checked("sudo k0s install controller")
+        config = self._config_flag(ssh)
+        ssh.run_checked(f"sudo k0s install controller{config}")
         ssh.run_checked(_K0S_START)
 
         if enable_workers:
@@ -111,8 +133,9 @@ class K0sInstaller(ClusterBackend):
         """
         logger.info("[%s] Joining k0s cluster as controller", ssh.host.uri)
         ssh.write_text(_CONTROLLER_TOKEN_PATH, token, mode=0o600)
+        config = self._config_flag(ssh)
         ssh.run_checked(
-            f"sudo k0s install controller --token-file {_CONTROLLER_TOKEN_PATH}"
+            f"sudo k0s install controller --token-file {_CONTROLLER_TOKEN_PATH}{config}"
         )
         ssh.run_checked(_K0S_START)
 
