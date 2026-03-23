@@ -48,48 +48,81 @@ pip install zcc
 
 ### Node prerequisites
 
-Before running `zcc deploy`, every target node must satisfy two conditions:
+Before running `zcc deploy`, every target node must satisfy the following
+conditions.
 
-1. **SSH key access** — `zcc` connects over SSH using the key or password you
-   configure in the cluster YAML.  Password-based auth is supported but key-based
-   auth is strongly recommended.
+#### SSH access
 
-2. **Passwordless sudo** — both the k0s and Docker Swarm backends issue
-   privileged commands using `sudo`.  The SSH user must be able to run `sudo`
-   without a password prompt.  Create a `/etc/sudoers.d/` drop-in that
-   permits only the exact commands `zcc` issues:
+`zcc` connects to every node over SSH using the key (or password) you configure
+in the cluster YAML.  Key-based authentication is strongly recommended.
 
-   **Docker Swarm backend**
+#### Passwordless sudo
 
-   ```sudoers
-   # /etc/sudoers.d/zcc-docker-swarm
-   # Docker Engine upstream installer (curl … | sudo sh)
-   ubuntu ALL=(ALL) NOPASSWD: /bin/sh
-   # Post-install: add the SSH user to the docker group
-   ubuntu ALL=(ALL) NOPASSWD: /usr/sbin/usermod
-   ```
+Both the k0s and Docker Swarm backends issue privileged commands using `sudo`.
+The SSH user must be able to run those commands without a password prompt.
+Create a `/etc/sudoers.d/` drop-in that restricts access to only the exact
+commands `zcc` uses:
 
-   After `install` completes and the next SSH connection is opened, the user is
-   a member of the `docker` group, so no further `sudo` is needed for Docker
-   Swarm commands (`swarm init`, `swarm join`, `docker info`, …).
+**Docker Swarm backend**
 
-   **k0s backend**
+```sudoers
+# /etc/sudoers.d/zcc-docker-swarm
+# Docker Engine upstream installer (curl … | sudo sh)
+ubuntu ALL=(ALL) NOPASSWD: /bin/sh
+# Post-install: add the SSH user to the docker group
+ubuntu ALL=(ALL) NOPASSWD: /usr/sbin/usermod
+```
 
-   ```sudoers
-   # /etc/sudoers.d/zcc-k0s
-   # k0s upstream installer (curl … | sudo sh)
-   ubuntu ALL=(ALL) NOPASSWD: /bin/sh
-   # All k0s lifecycle operations (install, start, token create, kubectl, status)
-   ubuntu ALL=(ALL) NOPASSWD: /usr/local/bin/k0s
-   ```
+After `install` completes and the next SSH connection is opened the user is a
+member of the `docker` group, so no further `sudo` is needed for Docker Swarm
+commands (`swarm init`, `swarm join`, `docker info`, …).
 
-   k0s requires root for every lifecycle operation (service install, start,
-   token generation, taint removal, status).  Running k0s as a non-root user is
-   an [open upstream feature request](https://github.com/k0sproject/k0s/issues/5910)
-   with no supported workaround at this time.
+**k0s backend**
 
-   Replace `ubuntu` with the SSH user configured in your cluster YAML in both
-   files.
+```sudoers
+# /etc/sudoers.d/zcc-k0s
+# k0s upstream installer (curl … | sudo sh)
+ubuntu ALL=(ALL) NOPASSWD: /bin/sh
+# All k0s lifecycle operations (install, start, token create, kubectl, status)
+ubuntu ALL=(ALL) NOPASSWD: /usr/local/bin/k0s
+```
+
+k0s requires root for every lifecycle operation (service install, start,
+token generation, taint removal, status).  Running k0s as a non-root user is
+an [open upstream feature request](https://github.com/k0sproject/k0s/issues/5910)
+with no supported workaround at this time.
+
+Replace `ubuntu` with the SSH user configured in your cluster YAML in both
+files.
+
+#### Required OS packages (k0s backend)
+
+The default k0s CNI plugin, **kube-router**, requires the following packages to
+be present on every cluster node:
+
+| Package | Purpose |
+|---------|---------|
+| `ipset` | kube-router uses ipset to manage service firewall rules |
+| `conntrack` (`conntrack-tools`) | Connection tracking required by kube-proxy and kube-router |
+| `iptables` | Network policy enforcement |
+| `iproute2` | Route management (BGP routes added by kube-router) |
+
+Install on Debian/Ubuntu nodes:
+
+```bash
+sudo apt-get install -y ipset conntrack iptables iproute2
+```
+
+Install on RHEL/CentOS/Fedora nodes:
+
+```bash
+sudo dnf install -y ipset conntrack-tools iptables iproute
+```
+
+kube-router also loads kernel modules at start-up (`ip_vs`, `xt_set`,
+`ip_tables`, `nf_conntrack`).  These are built into every mainstream Linux
+distribution kernel.  If your nodes use a stripped-down custom kernel, ensure
+`/lib/modules/$(uname -r)/` is populated and `modprobe` is available.
 
 ### 1. Write a cluster config
 
@@ -138,6 +171,124 @@ zcc plan my-cluster.yaml
 
 ```bash
 zcc deploy my-cluster.yaml
+```
+
+---
+
+## Network and firewall requirements (k0s backend)
+
+### IP forwarding
+
+k0s requires packet forwarding to be enabled on every node:
+
+```bash
+# Apply immediately
+sudo sysctl -w net.ipv4.ip_forward=1
+
+# Persist across reboots
+echo "net.ipv4.ip_forward = 1" | sudo tee /etc/sysctl.d/99-k0s.conf
+sudo sysctl --system
+```
+
+### Required ports
+
+Open the following ports between nodes.  All entries are TCP unless noted.
+
+| Port | Direction | Purpose |
+|------|-----------|---------|
+| 22 | controller ↔ workers | SSH (used by `zcc` itself) |
+| 6443 | workers → controllers | Kubernetes API server |
+| 8132 | workers → controllers | konnectivity agent tunnel |
+| 9443 | controllers → controllers | k0s controller join API (multi-controller clusters) |
+| 2380 | controllers → controllers | etcd peer communication (multi-controller clusters) |
+| 179 (TCP) | all nodes ↔ all nodes | BGP (kube-router peer sessions) |
+| 4 (proto, not port) | all nodes ↔ all nodes | IP-in-IP encapsulation (kube-router `overlay=full`, the default) |
+| 10250 | controllers → workers | kubelet API (metrics, logs, exec) |
+
+> **Note:** Port 4 is an IP *protocol number*, not a TCP/UDP port.  In iptables
+> terms: `iptables -A FORWARD -p 4 -j ACCEPT`.  If your host's `FORWARD` chain
+> defaults to `DROP` (common on hardened systems), add that rule explicitly.
+
+### FORWARD chain
+
+On systems where the iptables `FORWARD` chain policy is `DROP` (e.g. Debian
+with `ufw` enabled, or any hardened baseline), traffic between k0s nodes and
+pods will be silently dropped.  Allow forwarding across the cluster network
+interface:
+
+```bash
+# Replace <iface> with the interface that carries cluster traffic (e.g. eth0, ens3)
+sudo iptables -A FORWARD -i <iface> -j ACCEPT
+sudo iptables -A FORWARD -o <iface> -j ACCEPT
+# IP-in-IP (kube-router overlay, protocol 4)
+sudo iptables -A FORWARD -p 4 -j ACCEPT
+
+# Make persistent (Debian/Ubuntu)
+sudo apt-get install -y iptables-persistent
+sudo netfilter-persistent save
+```
+
+If you use `ufw`, the equivalent is:
+
+```bash
+# /etc/ufw/before.rules — add before the *filter block
+-A ufw-before-forward -i <iface> -j ACCEPT
+-A ufw-before-forward -o <iface> -j ACCEPT
+```
+
+---
+
+## k0s tuning
+
+### Custom k0s configuration
+
+`zcc` automatically passes a `--config` flag to every `k0s install` command
+when `/etc/k0s/k0s.yaml` exists on the remote node.  This is handled
+transparently by `K0sInstaller._config_flag()`: when the file is absent the
+flag is omitted and k0s uses its built-in defaults; when the file is present it
+is honoured.
+
+You can use this to customise any k0s setting.  Place the file on nodes via
+your configuration management tool (Ansible, cloud-init, Packer, …) before
+running `zcc deploy`.  Example:
+
+```yaml
+# /etc/k0s/k0s.yaml
+apiVersion: k0s.k0sproject.io/v1beta1
+kind: ClusterConfig
+metadata:
+  name: my-cluster
+spec:
+  network:
+    provider: kuberouter
+    kubeRouter:
+      autoMTU: true
+      extraArgs:
+        overlay: "off"    # see below
+```
+
+### kube-router overlay mode
+
+kube-router supports three overlay modes:
+
+| Value | Behaviour | When to use |
+|-------|-----------|-------------|
+| `full` (default) | IPIP tunnels between all nodes | Nodes on different subnets or when you cannot guarantee direct L3 reachability |
+| `subnet` | IPIP only across subnet boundaries; direct routing within a subnet | Mixed topology |
+| `off` | Pure BGP direct routing, no encapsulation | All nodes share the same L2 segment (e.g. one cloud VPC subnet, one rack) |
+
+Use `overlay: "off"` when all nodes are on the same L2 segment to eliminate
+unnecessary encapsulation overhead and avoid the need to allow IP protocol 4
+through firewalls.  Do **not** use `overlay: "off"` when nodes span subnets —
+pods will lose connectivity.
+
+```yaml
+spec:
+  network:
+    provider: kuberouter
+    kubeRouter:
+      extraArgs:
+        overlay: "off"
 ```
 
 ---
