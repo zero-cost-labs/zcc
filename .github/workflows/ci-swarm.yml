@@ -7,6 +7,20 @@ on:
     branches:
       - ci/swarm-integration
       - copilot/poc-test-deployment-backends
+    paths:
+      - 'zcc/deploy/swarm.py'
+      - 'zcc/deploy/backend.py'
+      - 'zcc/deploy/orchestrator.py'
+      - 'zcc/deploy/feature.py'
+      - 'zcc/deploy/ssh.py'
+      - 'zcc/models/**'
+      - 'zcc/loader.py'
+      - 'zcc/cli.py'
+      - 'tests/integration/test_swarm_real.py'
+      - 'tests/integration/Dockerfile.swarm-node'
+      - 'tests/integration/swarm-node-entrypoint.sh'
+      - '.github/workflows/ci-swarm.yml'
+      - 'pyproject.toml'
 
 permissions:
   contents: read

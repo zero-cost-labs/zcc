@@ -7,6 +7,19 @@ on:
     branches:
       - ci/k0s-integration
       - copilot/poc-test-deployment-backends
+    paths:
+      - 'zcc/deploy/k0s.py'
+      - 'zcc/deploy/backend.py'
+      - 'zcc/deploy/orchestrator.py'
+      - 'zcc/deploy/feature.py'
+      - 'zcc/deploy/ssh.py'
+      - 'zcc/models/**'
+      - 'zcc/loader.py'
+      - 'zcc/cli.py'
+      - 'tests/integration/test_k0s_real.py'
+      - 'docker/Dockerfile.k0s-node'
+      - '.github/workflows/ci-k0s.yml'
+      - 'pyproject.toml'
 
 permissions:
   contents: read
@@ -56,9 +69,9 @@ jobs:
       - name: Build k0s test-node image (Ubuntu 22.04 + systemd)
         run: |
           docker build \
-            -f tests/integration/Dockerfile.k0s-node \
+            -f docker/Dockerfile.k0s-node \
             -t zcc-k0s-node \
-            tests/integration/
+            docker/
 
       # k0s needs:
       #   --privileged       — to install kernel modules and manage iptables

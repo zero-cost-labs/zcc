@@ -32,9 +32,10 @@ pytestmark = pytest.mark.integration
 _REQUIRED = ("ZCC_CTRL_IP", "ZCC_WORKER1_IP", "ZCC_WORKER2_IP", "ZCC_SSH_KEY")
 
 # Maximum seconds to wait for all worker nodes to appear as Ready.
-# kube-router (the default k0s CNI) must pull its image and configure
-# networking before kubelet marks nodes as Ready — allow plenty of time.
-_NODE_READY_TIMEOUT = 300
+# After the controller is up and join tokens are issued, workers need to
+# download images and have kube-router configure networking.  120 s is
+# ample for a local/CI environment; reduce if nodes are consistently faster.
+_NODE_READY_TIMEOUT = 120
 
 
 def _cluster() -> Cluster:
@@ -96,12 +97,18 @@ def test_k0s_three_node_cluster():
     ctrl_host = cluster.hosts[0]
     deadline = time.monotonic() + _NODE_READY_TIMEOUT
     ready_nodes: list[str] = []
+    iteration = 0
 
     while time.monotonic() < deadline:
+        iteration += 1
         with SSHClient(ctrl_host) as ssh:
-            code, out, _ = ssh.run(
+            code, out, err = ssh.run(
                 "sudo k0s kubectl get nodes --no-headers"
             )
+        print(
+            f"[nodes poll #{iteration}] exit={code} "
+            f"stdout={out.strip()!r} stderr={err.strip()!r}"
+        )
         if code == 0 and out.strip():
             # Standard 'kubectl get nodes --no-headers' columns:
             #   NAME   STATUS   ROLES   AGE   VERSION
