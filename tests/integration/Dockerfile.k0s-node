@@ -25,6 +25,8 @@ RUN apt-get update \
        ca-certificates \
        iptables \
        iproute2 \
+       ipset \
+       conntrack \
     && rm -rf /var/lib/apt/lists/*
 
 # Mask units that do not work correctly inside containers

@@ -31,8 +31,10 @@ pytestmark = pytest.mark.integration
 
 _REQUIRED = ("ZCC_CTRL_IP", "ZCC_WORKER1_IP", "ZCC_WORKER2_IP", "ZCC_SSH_KEY")
 
-# Maximum seconds to wait for all worker nodes to appear as Ready
-_NODE_READY_TIMEOUT = 180
+# Maximum seconds to wait for all worker nodes to appear as Ready.
+# kube-router (the default k0s CNI) must pull its image and configure
+# networking before kubelet marks nodes as Ready — allow plenty of time.
+_NODE_READY_TIMEOUT = 300
 
 
 def _cluster() -> Cluster:
@@ -79,7 +81,9 @@ def test_k0s_three_node_cluster():
     against real privileged containers running systemd.
 
     Verification: ``k0s kubectl get nodes`` on the controller must eventually
-    report all 3 nodes as Ready.
+    report both worker nodes as Ready.  The controller is a pure control-plane
+    node (Workloads: false) and does not register a kubelet, so only the two
+    worker nodes appear in ``kubectl get nodes``.
     """
     cluster = _cluster()
 
@@ -87,6 +91,8 @@ def test_k0s_three_node_cluster():
     orch.deploy()
 
     # k0s may need additional time to report worker nodes as Ready after join.
+    # kube-router (the default CNI) must pull its image and set up BGP/iptables
+    # before kubelet transitions each node from NotReady → Ready.
     ctrl_host = cluster.hosts[0]
     deadline = time.monotonic() + _NODE_READY_TIMEOUT
     ready_nodes: list[str] = []
@@ -94,19 +100,24 @@ def test_k0s_three_node_cluster():
     while time.monotonic() < deadline:
         with SSHClient(ctrl_host) as ssh:
             code, out, _ = ssh.run(
-                "sudo k0s kubectl get nodes --no-headers "
-                "--output custom-columns=NAME:.metadata.name,STATUS:.status.conditions[-1].type"
+                "sudo k0s kubectl get nodes --no-headers"
             )
-        if code == 0:
+        if code == 0 and out.strip():
+            # Standard 'kubectl get nodes --no-headers' columns:
+            #   NAME   STATUS   ROLES   AGE   VERSION
+            # STATUS is "Ready" or "NotReady".  Avoid the conditions[-1].type
+            # jsonpath approach: when a CNI plugin adds a NetworkUnavailable
+            # condition it lands last in the array, so conditions[-1].type
+            # returns "NetworkUnavailable" instead of "Ready".
             ready_nodes = [
-                line.split()[0]
+                parts[0]
                 for line in out.strip().splitlines()
-                if line.strip() and line.strip().endswith("Ready")
+                if (parts := line.split()) and len(parts) >= 2 and parts[1] == "Ready"
             ]
-            if len(ready_nodes) == 3:
+            if len(ready_nodes) == 2:
                 break
         time.sleep(10)
 
-    assert len(ready_nodes) == 3, (
-        f"Expected 3 Ready nodes, got {len(ready_nodes)}: {ready_nodes}"
+    assert len(ready_nodes) == 2, (
+        f"Expected 2 Ready nodes, got {len(ready_nodes)}: {ready_nodes}"
     )
