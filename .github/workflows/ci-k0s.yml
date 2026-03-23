@@ -65,6 +65,10 @@ jobs:
       #   --cgroupns=host    — share the host cgroup namespace for systemd
       #   /sys/fs/cgroup rw  — allow systemd to manage cgroups inside the container
       #   /lib/modules ro    — allow kube-router to load iptables/ipvs kernel modules
+      #   --tmpfs /var/lib/k0s — k0s stores its containerd data here; Docker container
+      #     layers are already overlayfs, so mounting tmpfs gives k0s's containerd a
+      #     proper backing filesystem that supports a second overlayfs layer (avoids
+      #     "failed to mount rootfs component: invalid argument" errors).
       - name: Start k0s containers (controller + 2 workers, with systemd)
         run: |
           for name in k0s-controller k0s-worker-1 k0s-worker-2; do
@@ -75,6 +79,7 @@ jobs:
               --cgroupns=host \
               -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
               -v /lib/modules:/lib/modules:ro \
+              --tmpfs /var/lib/k0s:exec,mode=0755 \
               zcc-k0s-node
           done
 
