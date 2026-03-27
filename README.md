@@ -323,6 +323,28 @@ if found.  When you supply `k0s.yaml` via `backend:`, the file is written during
 `install` and the `--config` flag is picked up on the same node in the same
 deployment run — no separate provisioning step needed.
 
+**Overwrite semantics:** when `k0s.yaml` is provided under `backend:`, `zcc`
+**completely replaces** any pre-existing `/etc/k0s/k0s.yaml` on every node.
+The upload uses an atomic `sudo mv`, so the result is the exact content you
+supplied — there is no merging with the pre-placed file.
+
+YAML merging is intentionally not supported because it introduces several
+intractable corner cases with the k0s config schema:
+
+* **List fields** — k0s uses lists for chart extensions, worker profiles, and
+  extra API-server arguments.  Append-semantics are ambiguous and make it
+  impossible to *remove* an entry set in the pre-placed file.
+* **Key removal** — standard YAML has no tombstone/null-override mechanism, so
+  a merge can never delete a key that the pre-placed config already set.
+* **Type conflicts** — if the same key is a scalar in one file and a map in the
+  other, merge behaviour is undefined.
+* **Idempotency** — merge output depends on the per-node pre-placed file at
+  deployment time; nodes provisioned differently would produce different final
+  configs, making repeated deployments unpredictable.
+
+If you need to build on top of a pre-placed config, copy its contents into the
+`backend: k0s.yaml` value and extend it there before running `zcc`.
+
 ---
 
 ## k0s tuning
