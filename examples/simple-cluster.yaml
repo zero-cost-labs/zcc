@@ -71,3 +71,24 @@ features:
 
 config:
   - ./config/cluster-settings.yaml
+
+# Backend-specific deployment configuration.
+#
+# arguments: forwarded as CLI flags to every `k0s install controller/worker` call.
+# k0s.yaml:  uploaded to /etc/k0s/k0s.yaml on every node during install.
+#            Value may be inline YAML (block scalar) or a local filesystem path.
+backend:
+  arguments:
+    --network: calico
+  k0s.yaml: |
+    apiVersion: k0s.k0sproject.io/v1beta1
+    kind: ClusterConfig
+    metadata:
+      name: simple-cluster
+    spec:
+      network:
+        provider: kuberouter
+        kubeRouter:
+          autoMTU: true
+          extraArgs:
+            overlay: "off"
