@@ -85,6 +85,9 @@ commands (`swarm init`, `swarm join`, `docker info`, …).
 ubuntu ALL=(ALL) NOPASSWD: /bin/sh
 # All k0s lifecycle operations (install, start, token create, kubectl, status)
 ubuntu ALL=(ALL) NOPASSWD: /usr/local/bin/k0s
+# Config file upload (backend: section): create /etc/k0s directory and move temp files
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/mkdir -p /etc/k0s
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/mv /tmp/zcc-k0s.yaml.tmp /etc/k0s/k0s.yaml
 ```
 
 k0s requires root for every lifecycle operation (service install, start,
@@ -279,7 +282,8 @@ backend.  For the k0s backend:
 
 `zcc` creates the parent directory with `sudo mkdir -p` and moves the file into
 place with `sudo mv`, so no pre-existing directory or elevated SFTP session is
-required.
+required.  These commands must be permitted in the node's sudoers drop-in —
+they are included in the `zcc-k0s` example under [Node prerequisites](#node-prerequisites).
 
 #### Inline k0s configuration
 

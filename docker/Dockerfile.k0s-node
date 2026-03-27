@@ -72,7 +72,7 @@ EOF
 # Create the 'ci' user with the exact sudoers permissions required by k0s
 # (mirrors the drop-in documented in README.md "Node prerequisites").
 RUN useradd -m -s /bin/bash ci \
-    && printf '# k0s upstream installer (curl … | sudo sh)\nci ALL=(ALL) NOPASSWD: /bin/sh\n# All k0s lifecycle operations (install, start, token create, kubectl, status)\nci ALL=(ALL) NOPASSWD: /usr/local/bin/k0s\n' \
+    && printf '# k0s upstream installer (curl … | sudo sh)\nci ALL=(ALL) NOPASSWD: /bin/sh\n# All k0s lifecycle operations (install, start, token create, kubectl, status)\nci ALL=(ALL) NOPASSWD: /usr/local/bin/k0s\n# Config file upload (backend: section): create /etc/k0s and move temp files into place\nci ALL=(ALL) NOPASSWD: /usr/bin/mkdir -p /etc/k0s\nci ALL=(ALL) NOPASSWD: /usr/bin/mv /tmp/zcc-k0s.yaml.tmp /etc/k0s/k0s.yaml\n' \
        > /etc/sudoers.d/zcc-k0s \
     && chmod 0440 /etc/sudoers.d/zcc-k0s
 
