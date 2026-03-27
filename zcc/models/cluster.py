@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator
 
+from .backend import BackendConfig
 from .feature import Feature
 from .host import Host
 
@@ -19,6 +20,7 @@ class Cluster(BaseModel):
     hosts: list[Host] = Field(min_length=1)
     features: list[Feature] = []
     config: list[str] = []
+    backend: BackendConfig = Field(default_factory=BackendConfig)
 
     @field_validator("hosts")
     @classmethod

@@ -54,4 +54,30 @@ config:
     Local filesystem paths containing supplementary
     configuration files made available during deployment
 
+backend:
+  type: custom
+  arity: 0..1
+  description: |
+    Backend-specific deployment configuration.
+
+    ``arguments`` holds arbitrary key→value pairs forwarded to the backend
+    as CLI flags or configuration options.
+
+    Every other key is treated as a *configuration file* entry: the key is
+    the destination filename and the value is either the raw file content
+    (expressed as a YAML block scalar) or a filesystem path pointing to an
+    existing file.
+
+    Example::
+
+        backend:
+          arguments:
+            --network: calico
+          "k0s.yaml": |
+            apiVersion: k0s.k0sproject.io/v1beta1
+            kind: ClusterConfig
+          "containerd.toml": "/etc/containerd/config.toml"
+
+    Each backend fetches only the entries it recognises and ignores the rest.
+
   

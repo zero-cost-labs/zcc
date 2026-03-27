@@ -434,3 +434,67 @@ class TestCluster:
         )
         assert len(cluster.hosts) == 2
         assert len(cluster.features) == 1
+
+
+# ---------------------------------------------------------------------------
+# BackendConfig
+# ---------------------------------------------------------------------------
+
+
+class TestBackendConfig:
+    """Tests for the BackendConfig model."""
+
+    def test_default_is_empty(self):
+        from zcc.models.backend import BackendConfig
+
+        cfg = BackendConfig()
+        assert cfg.arguments == {}
+        assert cfg.config_files == {}
+
+    def test_arguments_are_stored(self):
+        from zcc.models.backend import BackendConfig
+
+        cfg = BackendConfig.model_validate({"arguments": {"--network": "calico"}})
+        assert cfg.arguments == {"--network": "calico"}
+
+    def test_config_file_inline_content(self):
+        from zcc.models.backend import BackendConfig
+
+        cfg = BackendConfig.model_validate(
+            {"k0s.yaml": "apiVersion: k0s.k0sproject.io/v1beta1\nkind: ClusterConfig\n"}
+        )
+        assert cfg.config_files == {
+            "k0s.yaml": "apiVersion: k0s.k0sproject.io/v1beta1\nkind: ClusterConfig\n"
+        }
+
+    def test_config_file_non_string_value_raises(self):
+        from pydantic import ValidationError
+        from zcc.models.backend import BackendConfig
+
+        with pytest.raises(ValidationError):
+            BackendConfig.model_validate({"k0s.yaml": {"nested": "dict"}})
+
+    def test_cluster_backend_defaults_to_empty(self):
+        """Cluster.backend defaults to an empty BackendConfig when omitted."""
+        cluster = Cluster.model_validate(
+            {
+                "name": "t",
+                "hosts": [{"name": "h", "uri": "10.0.0.1", "labels": ["controller"]}],
+            }
+        )
+        assert cluster.backend.arguments == {}
+        assert cluster.backend.config_files == {}
+
+    def test_cluster_backend_parses_arguments_and_files(self):
+        cluster = Cluster.model_validate(
+            {
+                "name": "t",
+                "hosts": [{"name": "h", "uri": "10.0.0.1", "labels": ["controller"]}],
+                "backend": {
+                    "arguments": {"--network": "calico"},
+                    "k0s.yaml": "apiVersion: k0s.k0sproject.io/v1beta1\n",
+                },
+            }
+        )
+        assert cluster.backend.arguments == {"--network": "calico"}
+        assert "k0s.yaml" in cluster.backend.config_files

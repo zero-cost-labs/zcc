@@ -85,6 +85,9 @@ commands (`swarm init`, `swarm join`, `docker info`, …).
 ubuntu ALL=(ALL) NOPASSWD: /bin/sh
 # All k0s lifecycle operations (install, start, token create, kubectl, status)
 ubuntu ALL=(ALL) NOPASSWD: /usr/local/bin/k0s
+# Config file upload (backend: section): create /etc/k0s directory and move temp files
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/mkdir -p /etc/k0s
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/mv /tmp/zcc-k0s.yaml.tmp /etc/k0s/k0s.yaml
 ```
 
 k0s requires root for every lifecycle operation (service install, start,
@@ -238,34 +241,113 @@ If you use `ufw`, the equivalent is:
 
 ---
 
-## k0s tuning
+## Backend configuration
 
-### Custom k0s configuration
+The optional top-level `backend:` section lets you supply backend-specific
+deployment settings directly in the cluster YAML, instead of pre-placing files
+on nodes manually.
 
-`zcc` automatically passes a `--config` flag to every `k0s install` command
-when `/etc/k0s/k0s.yaml` exists on the remote node.  This is handled
-transparently by `K0sInstaller._config_flag()`: when the file is absent the
-flag is omitted and k0s uses its built-in defaults; when the file is present it
-is honoured.
+### `arguments`
 
-You can use this to customise any k0s setting.  Place the file on nodes via
-your configuration management tool (Ansible, cloud-init, Packer, …) before
-running `zcc deploy`.  Example:
+Key/value pairs under `arguments` are forwarded as CLI flags to every
+`k0s install controller` and `k0s install worker` invocation.  Values are
+automatically shell-quoted.
 
 ```yaml
-# /etc/k0s/k0s.yaml
-apiVersion: k0s.k0sproject.io/v1beta1
-kind: ClusterConfig
-metadata:
-  name: my-cluster
-spec:
-  network:
-    provider: kuberouter
-    kubeRouter:
-      autoMTU: true
-      extraArgs:
-        overlay: "off"    # see below
+backend:
+  arguments:
+    --network: calico
 ```
+
+Generates `sudo k0s install controller --network calico` (and the same for
+worker joins).
+
+### `config_files` — inline or path-based
+
+Any key that is *not* `arguments` is treated as a **configuration file entry**.
+The key is the logical filename; the value is either:
+
+* **Inline content** — a YAML/TOML/any-text block scalar written directly in the
+  cluster file.
+* **A local filesystem path** — an absolute or relative path to an existing file
+  on the machine running `zcc`.
+
+During `install`, `zcc` reads the content (expanding a path if needed) and
+uploads it to every node via SFTP.  The uploaded path is determined by the
+backend.  For the k0s backend:
+
+| Key | Remote destination |
+|-----|--------------------|
+| `k0s.yaml` | `/etc/k0s/k0s.yaml` |
+
+`zcc` creates the parent directory with `sudo mkdir -p` and moves the file into
+place with `sudo mv`, so no pre-existing directory or elevated SFTP session is
+required.  These commands must be permitted in the node's sudoers drop-in —
+they are included in the `zcc-k0s` example under [Node prerequisites](#node-prerequisites).
+
+#### Inline k0s configuration
+
+```yaml
+backend:
+  arguments:
+    --network: calico
+  k0s.yaml: |
+    apiVersion: k0s.k0sproject.io/v1beta1
+    kind: ClusterConfig
+    metadata:
+      name: my-cluster
+    spec:
+      network:
+        provider: kuberouter
+        kubeRouter:
+          autoMTU: true
+          extraArgs:
+            overlay: "off"
+```
+
+#### k0s configuration from a local file
+
+```yaml
+backend:
+  k0s.yaml: ./config/k0s.yaml
+```
+
+`./config/k0s.yaml` is read from the machine running `zcc` and uploaded to
+`/etc/k0s/k0s.yaml` on every cluster node.
+
+### Relationship to the pre-existing `/etc/k0s/k0s.yaml` check
+
+The k0s backend also detects a pre-existing `/etc/k0s/k0s.yaml` on each node
+(placed by Ansible, cloud-init, Packer, …) and passes `--config` automatically
+if found.  When you supply `k0s.yaml` via `backend:`, the file is written during
+`install` and the `--config` flag is picked up on the same node in the same
+deployment run — no separate provisioning step needed.
+
+**Overwrite semantics:** when `k0s.yaml` is provided under `backend:`, `zcc`
+**completely replaces** any pre-existing `/etc/k0s/k0s.yaml` on every node.
+The upload uses an atomic `sudo mv`, so the result is the exact content you
+supplied — there is no merging with the pre-placed file.
+
+YAML merging is intentionally not supported because it introduces several
+intractable corner cases with the k0s config schema:
+
+* **List fields** — k0s uses lists for chart extensions, worker profiles, and
+  extra API-server arguments.  Append-semantics are ambiguous and make it
+  impossible to *remove* an entry set in the pre-placed file.
+* **Key removal** — standard YAML has no tombstone/null-override mechanism, so
+  a merge can never delete a key that the pre-placed config already set.
+* **Type conflicts** — if the same key is a scalar in one file and a map in the
+  other, merge behaviour is undefined.
+* **Idempotency** — merge output depends on the per-node pre-placed file at
+  deployment time; nodes provisioned differently would produce different final
+  configs, making repeated deployments unpredictable.
+
+If you need to build on top of a pre-placed config, copy its contents into the
+`backend: k0s.yaml` value and extend it there before running `zcc`.
+
+---
+
+## k0s tuning
 
 ### kube-router overlay mode
 
@@ -303,6 +385,9 @@ reference.  They use a simple, self-describing meta-format in YAML:
 | `cluster.schema` | Top-level cluster document |
 | `host.schema` | Individual node configuration |
 | `feature.schema` | Capability deployed to label-selected nodes |
+
+The top-level `backend:` section in a cluster YAML is validated by the
+`BackendConfig` model.  See [Backend configuration](#backend-configuration) below.
 
 ### Minimal cluster (sole node)
 
@@ -347,11 +432,12 @@ Commands:
 
 ```
 zcc/
-├── models/          Pydantic models — Cluster, Host, Feature
+├── models/          Pydantic models — Cluster, Host, Feature, BackendConfig
 ├── loader.py        YAML → validated Cluster
 └── deploy/
     ├── ssh.py       SSH wrapper around paramiko with known_hosts verification
     ├── k0s.py       k0s binary install, controller join/bootstrap, worker join
+    ├── swarm.py     Docker Swarm backend
     ├── feature.py   Feature file upload + command execution
     └── orchestrator.py  End-to-end deployment sequencing
 ```

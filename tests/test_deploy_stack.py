@@ -583,3 +583,129 @@ class TestDockerSwarmBackend:
             f"docker swarm join --token {wrk_tok} 10.0.0.1:2377"
         )
 
+
+
+class TestK0sInstallerWithBackendConfig:
+    """K0sInstaller integration with BackendConfig (arguments + config_files)."""
+
+    @staticmethod
+    def _run_no_config(cmd: str) -> tuple[int, str, str]:
+        return (1, "", "") if cmd.startswith("test -f") else (0, "", "")
+
+    def test_install_uploads_k0s_yaml_inline_content(self):
+        """k0s.yaml inline content is written via SFTP then moved with sudo."""
+        from zcc.models.backend import BackendConfig
+
+        cfg = BackendConfig.model_validate(
+            {"k0s.yaml": "apiVersion: k0s.k0sproject.io/v1beta1\n"}
+        )
+        installer = K0sInstaller(cfg)
+        ssh = MagicMock()
+        ssh.host.uri = "10.0.0.1"
+
+        installer.install(ssh)
+
+        # write_text is called with tmp path first
+        ssh.write_text.assert_called_once_with(
+            "/tmp/zcc-k0s.yaml.tmp", "apiVersion: k0s.k0sproject.io/v1beta1\n"
+        )
+        # sudo mkdir -p and sudo mv must follow
+        assert call("sudo mkdir -p /etc/k0s") in ssh.run_checked.call_args_list
+        assert call("sudo mv /tmp/zcc-k0s.yaml.tmp /etc/k0s/k0s.yaml") in ssh.run_checked.call_args_list
+
+    def test_install_no_config_files_skips_upload(self):
+        """With no config_files, install() only runs the binary installer script."""
+        installer = K0sInstaller()
+        ssh = MagicMock()
+        ssh.host.uri = "10.0.0.1"
+
+        installer.install(ssh)
+
+        ssh.run_checked.assert_called_once_with(
+            "curl -sSLf https://get.k0s.sh | sudo sh"
+        )
+        ssh.write_text.assert_not_called()
+
+    def test_init_controller_appends_extra_args(self):
+        """BackendConfig.arguments are appended to k0s install controller."""
+        from zcc.models.backend import BackendConfig
+
+        cfg = BackendConfig.model_validate({"arguments": {"--network": "calico"}})
+        installer = K0sInstaller(cfg)
+        ssh = MagicMock()
+        ssh.host.uri = "10.0.0.1"
+        ssh.run_checked.side_effect = [
+            "",
+            "",
+            "ctl-token\n",
+            "wrk-token\n",
+        ]
+        ssh.run.side_effect = self._run_no_config
+
+        installer.init_controller(ssh)
+
+        ssh.run_checked.assert_any_call(
+            "sudo k0s install controller --network calico"
+        )
+
+    def test_join_controller_appends_extra_args(self):
+        """BackendConfig.arguments are appended to k0s install controller (join)."""
+        from zcc.models.backend import BackendConfig
+
+        cfg = BackendConfig.model_validate({"arguments": {"--network": "calico"}})
+        installer = K0sInstaller(cfg)
+        ssh = MagicMock()
+        ssh.host.uri = "10.0.0.2"
+        ssh.run.return_value = (1, "", "")  # no remote config file
+
+        installer.join_controller(ssh, "some-token")
+
+        ssh.run_checked.assert_any_call(
+            "sudo k0s install controller --token-file /tmp/k0s-controller-token --network calico"
+        )
+
+    def test_join_worker_appends_extra_args(self):
+        """BackendConfig.arguments are appended to k0s install worker."""
+        from zcc.models.backend import BackendConfig
+
+        cfg = BackendConfig.model_validate({"arguments": {"--network": "calico"}})
+        installer = K0sInstaller(cfg)
+        ssh = MagicMock()
+        ssh.host.uri = "10.0.0.3"
+
+        installer.join_worker(ssh, "wrk-token")
+
+        ssh.run_checked.assert_any_call(
+            "sudo k0s install worker --token-file /tmp/k0s-worker-token --network calico"
+        )
+
+    def test_install_reads_k0s_yaml_from_local_file(self, tmp_path):
+        """When config_files value is a valid local path, the file content is read."""
+        from zcc.models.backend import BackendConfig
+
+        local_file = tmp_path / "my-k0s.yaml"
+        local_file.write_text("apiVersion: k0s.k0sproject.io/v1beta1\n")
+
+        cfg = BackendConfig.model_validate({"k0s.yaml": str(local_file)})
+        installer = K0sInstaller(cfg)
+        ssh = MagicMock()
+        ssh.host.uri = "10.0.0.1"
+
+        installer.install(ssh)
+
+        ssh.write_text.assert_called_once_with(
+            "/tmp/zcc-k0s.yaml.tmp", "apiVersion: k0s.k0sproject.io/v1beta1\n"
+        )
+
+    def test_orchestrator_passes_cluster_backend_to_k0s_installer(self):
+        """DeployOrchestrator wires cluster.backend into the default K0sInstaller."""
+        cluster = _cluster(
+            {
+                "name": "t",
+                "hosts": [{"name": "h", "uri": "10.0.0.1", "labels": ["controller"]}],
+                "backend": {"arguments": {"--network": "calico"}},
+            }
+        )
+        orch = DeployOrchestrator(cluster)
+        assert isinstance(orch._backend, K0sInstaller)
+        assert orch._backend._cfg.arguments == {"--network": "calico"}
