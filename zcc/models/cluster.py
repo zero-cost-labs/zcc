@@ -20,7 +20,20 @@ class Cluster(BaseModel):
     hosts: list[Host] = Field(min_length=1)
     features: list[Feature] = []
     config: list[str] = []
-    backend: BackendConfig = Field(default_factory=BackendConfig)
+
+    @property
+    def backend(self) -> BackendConfig:
+        """Backend configuration for the cluster, derived from the hosts.
+
+        Since heterogeneous backends are not supported all hosts must carry the
+        same backend configuration.  This property returns the backend from the
+        first host as the authoritative cluster-level reference.
+
+        ``hosts`` always contains at least one element (enforced by the
+        ``min_length=1`` field constraint), so ``hosts[0]`` is always safe to
+        access on a fully validated model instance.
+        """
+        return self.hosts[0].backend
 
     @field_validator("hosts")
     @classmethod
@@ -38,6 +51,15 @@ class Cluster(BaseModel):
         uris = [h.uri for h in hosts]
         if len(uris) != len(set(uris)):
             raise ValueError("Host URIs must be unique across the cluster")
+
+        # All hosts must use the same backend configuration.
+        if len(hosts) > 1:
+            first = hosts[0].backend
+            for host in hosts[1:]:
+                if host.backend != first:
+                    raise ValueError(
+                        "All hosts must use the same backend configuration"
+                    )
 
         return hosts
 

@@ -475,7 +475,7 @@ class TestBackendConfig:
             BackendConfig.model_validate({"k0s.yaml": {"nested": "dict"}})
 
     def test_cluster_backend_defaults_to_empty(self):
-        """Cluster.backend defaults to an empty BackendConfig when omitted."""
+        """Cluster.backend defaults to an empty BackendConfig when host omits it."""
         cluster = Cluster.model_validate(
             {
                 "name": "t",
@@ -486,15 +486,102 @@ class TestBackendConfig:
         assert cluster.backend.config_files == {}
 
     def test_cluster_backend_parses_arguments_and_files(self):
+        """Cluster.backend is derived from the host's backend configuration."""
         cluster = Cluster.model_validate(
             {
                 "name": "t",
-                "hosts": [{"name": "h", "uri": "10.0.0.1", "labels": ["controller"]}],
-                "backend": {
-                    "arguments": {"--network": "calico"},
-                    "k0s.yaml": "apiVersion: k0s.k0sproject.io/v1beta1\n",
-                },
+                "hosts": [
+                    {
+                        "name": "h",
+                        "uri": "10.0.0.1",
+                        "labels": ["controller"],
+                        "backend": {
+                            "arguments": {"--network": "calico"},
+                            "k0s.yaml": "apiVersion: k0s.k0sproject.io/v1beta1\n",
+                        },
+                    }
+                ],
             }
         )
         assert cluster.backend.arguments == {"--network": "calico"}
         assert "k0s.yaml" in cluster.backend.config_files
+
+    def test_host_backend_defaults_to_empty(self):
+        """Host.backend defaults to an empty BackendConfig when omitted."""
+        host = Host.model_validate(
+            {"name": "h", "uri": "10.0.0.1", "labels": ["controller"]}
+        )
+        assert host.backend.arguments == {}
+        assert host.backend.config_files == {}
+
+    def test_host_backend_parses_arguments(self):
+        """Host.backend stores backend arguments correctly."""
+        host = Host.model_validate(
+            {
+                "name": "h",
+                "uri": "10.0.0.1",
+                "labels": ["controller"],
+                "backend": {"arguments": {"--network": "calico"}},
+            }
+        )
+        assert host.backend.arguments == {"--network": "calico"}
+
+    def test_host_backend_parses_config_files(self):
+        """Host.backend stores config file entries correctly."""
+        host = Host.model_validate(
+            {
+                "name": "h",
+                "uri": "10.0.0.1",
+                "labels": ["controller"],
+                "backend": {"k0s.yaml": "apiVersion: k0s.k0sproject.io/v1beta1\n"},
+            }
+        )
+        assert host.backend.config_files == {
+            "k0s.yaml": "apiVersion: k0s.k0sproject.io/v1beta1\n"
+        }
+
+    def test_cluster_all_same_backend_is_valid(self):
+        """A cluster where all hosts share the same backend configuration is valid."""
+        cluster = Cluster.model_validate(
+            {
+                "name": "t",
+                "hosts": [
+                    {
+                        "name": "ctrl",
+                        "uri": "10.0.0.1",
+                        "labels": ["controller"],
+                        "backend": {"arguments": {"--network": "calico"}},
+                    },
+                    {
+                        "name": "wrk",
+                        "uri": "10.0.0.2",
+                        "labels": ["worker"],
+                        "backend": {"arguments": {"--network": "calico"}},
+                    },
+                ],
+            }
+        )
+        assert cluster.backend.arguments == {"--network": "calico"}
+
+    def test_cluster_differing_backends_fail(self):
+        """A cluster where hosts have different backend configurations must be rejected."""
+        with pytest.raises(ValidationError, match="same backend"):
+            Cluster.model_validate(
+                {
+                    "name": "t",
+                    "hosts": [
+                        {
+                            "name": "ctrl",
+                            "uri": "10.0.0.1",
+                            "labels": ["controller"],
+                            "backend": {"arguments": {"--network": "calico"}},
+                        },
+                        {
+                            "name": "wrk",
+                            "uri": "10.0.0.2",
+                            "labels": ["worker"],
+                            "backend": {"arguments": {"--network": "flannel"}},
+                        },
+                    ],
+                }
+            )

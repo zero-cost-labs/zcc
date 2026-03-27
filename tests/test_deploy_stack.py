@@ -702,8 +702,14 @@ class TestK0sInstallerWithBackendConfig:
         cluster = _cluster(
             {
                 "name": "t",
-                "hosts": [{"name": "h", "uri": "10.0.0.1", "labels": ["controller"]}],
-                "backend": {"arguments": {"--network": "calico"}},
+                "hosts": [
+                    {
+                        "name": "h",
+                        "uri": "10.0.0.1",
+                        "labels": ["controller"],
+                        "backend": {"arguments": {"--network": "calico"}},
+                    }
+                ],
             }
         )
         orch = DeployOrchestrator(cluster)
