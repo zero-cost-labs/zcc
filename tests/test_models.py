@@ -540,8 +540,9 @@ class TestBackendConfig:
             "k0s.yaml": "apiVersion: k0s.k0sproject.io/v1beta1\n"
         }
 
-    def test_cluster_all_same_backend_is_valid(self):
-        """A cluster where all hosts share the same backend configuration is valid."""
+    def test_cluster_different_config_same_type_valid(self):
+        """A cluster where hosts share the same backend type but have different
+        per-host arguments/config files is now valid (config is host-scoped)."""
         cluster = Cluster.model_validate(
             {
                 "name": "t",
@@ -556,16 +557,21 @@ class TestBackendConfig:
                         "name": "wrk",
                         "uri": "10.0.0.2",
                         "labels": ["worker"],
-                        "backend": {"arguments": {"--network": "calico"}},
+                        "backend": {"arguments": {"--network": "flannel"}},
                     },
                 ],
             }
         )
-        assert cluster.backend.arguments == {"--network": "calico"}
+        # Both hosts still have the same backend type (k0s default).
+        assert cluster.hosts[0].backend.type.value == "k0s"
+        assert cluster.hosts[1].backend.type.value == "k0s"
 
-    def test_cluster_differing_backends_fail(self):
-        """A cluster where hosts have different backend configurations must be rejected."""
-        with pytest.raises(ValidationError, match="same backend"):
+    def test_cluster_different_backend_types_without_recipe_fail(self):
+        """A cluster where hosts use different backend types must be rejected
+        unless a translation recipe is provided for every (source, target) pair."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="Heterogeneous backend types"):
             Cluster.model_validate(
                 {
                     "name": "t",
@@ -574,14 +580,103 @@ class TestBackendConfig:
                             "name": "ctrl",
                             "uri": "10.0.0.1",
                             "labels": ["controller"],
-                            "backend": {"arguments": {"--network": "calico"}},
+                            "backend": {"type": "k0s"},
                         },
                         {
                             "name": "wrk",
                             "uri": "10.0.0.2",
                             "labels": ["worker"],
-                            "backend": {"arguments": {"--network": "flannel"}},
+                            "backend": {"type": "swarm"},
                         },
                     ],
                 }
             )
+
+    def test_cluster_different_backend_types_with_recipes_valid(self):
+        """A cluster with heterogeneous backend types is valid when translation
+        recipes cover every (source, target) pair."""
+        cluster = Cluster.model_validate(
+            {
+                "name": "mixed",
+                "hosts": [
+                    {
+                        "name": "ctrl",
+                        "uri": "10.0.0.1",
+                        "labels": ["controller"],
+                        "backend": {"type": "k0s"},
+                    },
+                    {
+                        "name": "wrk",
+                        "uri": "10.0.0.2",
+                        "labels": ["worker"],
+                        "backend": {"type": "swarm"},
+                    },
+                ],
+                "translations": [
+                    {"source": "k0s", "target": "swarm"},
+                    {"source": "swarm", "target": "k0s"},
+                ],
+            }
+        )
+        assert len(cluster.translations) == 2
+
+    def test_cluster_heterogeneous_missing_one_direction_fails(self):
+        """When only one direction of the translation recipe is provided the
+        cluster validator must still reject the definition."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="Heterogeneous backend types"):
+            Cluster.model_validate(
+                {
+                    "name": "partial",
+                    "hosts": [
+                        {
+                            "name": "ctrl",
+                            "uri": "10.0.0.1",
+                            "labels": ["controller"],
+                            "backend": {"type": "k0s"},
+                        },
+                        {
+                            "name": "wrk",
+                            "uri": "10.0.0.2",
+                            "labels": ["worker"],
+                            "backend": {"type": "swarm"},
+                        },
+                    ],
+                    # Only one direction — swarm→k0s is missing.
+                    "translations": [
+                        {"source": "k0s", "target": "swarm"},
+                    ],
+                }
+            )
+
+    def test_backend_type_defaults_to_k0s(self):
+        """BackendConfig.type defaults to 'k0s' when omitted."""
+        from zcc.models.backend import BackendConfig, BackendType
+
+        cfg = BackendConfig()
+        assert cfg.type == BackendType.K0S
+
+    def test_backend_type_swarm_is_accepted(self):
+        """BackendConfig accepts 'swarm' as a valid type."""
+        from zcc.models.backend import BackendConfig, BackendType
+
+        cfg = BackendConfig.model_validate({"type": "swarm"})
+        assert cfg.type == BackendType.SWARM
+
+    def test_translation_recipe_same_type_fails(self):
+        """A TranslationRecipe whose source and target are identical must be
+        rejected — bridging a backend to itself is meaningless."""
+        from pydantic import ValidationError
+        from zcc.models.translation import TranslationRecipe
+
+        with pytest.raises(ValidationError, match="bridge two"):
+            TranslationRecipe.model_validate({"source": "k0s", "target": "k0s"})
+
+    def test_translation_recipe_valid(self):
+        """A TranslationRecipe with distinct source and target is valid."""
+        from zcc.models.translation import TranslationRecipe
+
+        recipe = TranslationRecipe.model_validate({"source": "k0s", "target": "swarm"})
+        assert recipe.source.value == "k0s"
+        assert recipe.target.value == "swarm"

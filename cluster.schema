@@ -54,4 +54,55 @@ config:
     Local filesystem paths containing supplementary
     configuration files made available during deployment
 
+translations:
+  type: custom
+  arity: 0..*
+  description: |
+    Translation recipes that allow heterogeneous backend types to coexist
+    in a single cluster definition.
+
+    A cluster whose hosts all use the same ``backend.type`` does NOT need
+    translation recipes — the homogeneous case is the default and is always
+    valid.
+
+    When hosts with *different* ``backend.type`` values are declared, a
+    recipe must exist for **every distinct (source, target) pair** among
+    those types.  Both directions are usually required because join-token
+    exchange is asymmetric.
+
+    IMPORTANT — intrinsic limitations:
+
+      k0s and Docker Swarm are architecturally incompatible.  They use
+      different control planes (etcd + Kubernetes API server vs. Raft in
+      the Docker daemon), incompatible join protocols, and separate overlay
+      networks (CNI plugins vs. Docker VXLAN).  Nodes running different
+      backends cannot form a single native cluster.
+
+      A translation recipe is the *declaration* that a bridge will be
+      provided; the actual bridging logic must be implemented as a
+      BackendTranslator registered with the DeployOrchestrator at deploy
+      time.  No concrete translator is shipped yet — this is an extension
+      point for future federation work (e.g. a cross-cluster service mesh,
+      API gateway, or custom network overlay).
+
+    Example::
+
+        translations:
+          - source: k0s
+            target: swarm
+          - source: swarm
+            target: k0s
+
+  schema:
+    source:
+      type: string
+      choice: ["k0s", "swarm"]
+      description: |
+        The backend type that initiates the connection / sends the join token.
+    target:
+      type: string
+      choice: ["k0s", "swarm"]
+      description: |
+        The backend type that receives the connection / consumes the join token.
+
   

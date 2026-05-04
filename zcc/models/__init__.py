@@ -1,6 +1,6 @@
 """Models package for zcc."""
 
-from .backend import BackendConfig
+from .backend import BackendConfig, BackendType
 from .cluster import Cluster
 from .feature import Feature
 from .host import (
@@ -15,9 +15,11 @@ from .host import (
     StorageConfig,
     StoragePermission,
 )
+from .translation import TranslationRecipe
 
 __all__ = [
     "BackendConfig",
+    "BackendType",
     "Cluster",
     "Feature",
     "Host",
@@ -30,4 +32,5 @@ __all__ = [
     "SSHConfig",
     "StorageConfig",
     "StoragePermission",
+    "TranslationRecipe",
 ]

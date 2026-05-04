@@ -2,5 +2,6 @@
 
 from .orchestrator import DeployOrchestrator
 from .ssh import SSHClient
+from .translation import BackendTranslator
 
-__all__ = ["DeployOrchestrator", "SSHClient"]
+__all__ = ["BackendTranslator", "DeployOrchestrator", "SSHClient"]

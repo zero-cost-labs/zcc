@@ -121,6 +121,11 @@ backend:
   description: |
     Backend-specific deployment configuration for this host.
 
+    ``type`` selects which cluster-backend technology the host runs.
+    All hosts in a cluster must declare the same ``type`` unless a
+    translation recipe is provided for every distinct (source, target) pair
+    — see the ``translations`` key at the cluster level.
+
     ``arguments`` holds arbitrary key→value pairs forwarded to the backend
     as CLI flags or configuration options.
 
@@ -129,12 +134,18 @@ backend:
     (expressed as a YAML block scalar) or a filesystem path pointing to an
     existing file.
 
-    All hosts in a cluster must declare the same backend configuration.
-    Heterogeneous backends across hosts are not supported.
+    Because backend configuration is host-scoped, different hosts within the
+    same backend type may carry different ``arguments`` and config files (e.g.
+    a GPU node with a custom ``containerd.toml``).
+
+    Note: k0s and Docker Swarm use incompatible control planes, join
+    protocols, and overlay networks. They cannot form a single native cluster
+    without a federation layer. See ``translations`` in the cluster schema.
 
     Example::
 
         backend:
+          type: k0s          # explicit; same as the default
           arguments:
             --network: calico
           "k0s.yaml": |
@@ -143,5 +154,24 @@ backend:
           "containerd.toml": "/etc/containerd/config.toml"
 
     Each backend fetches only the entries it recognises and ignores the rest.
+  schema:
+    type:
+      type: string
+      choice: ["k0s", "swarm"]
+      default: k0s
+      description: |
+        Which cluster-backend technology this host runs.
+
+        All hosts in a cluster must use the same ``type`` unless a
+        translation recipe is provided for every (source, target) pair
+        declared across the cluster's host definitions.
+
+        ``k0s``   — lightweight Kubernetes distribution (default).
+        ``swarm`` — Docker Swarm built-in orchestration.
+    arguments:
+      type: map
+      arity: 0..1
+      description: |
+        Arbitrary key→value pairs forwarded to the backend as CLI flags.
 
     
