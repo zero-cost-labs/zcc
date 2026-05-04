@@ -163,7 +163,7 @@ class Cluster(BaseModel):
         if len(types_present) <= 1:
             return self
 
-        primary_type = self.primary_controller.backend.type  # type: ignore[union-attr]
+        primary_type = self.primary_controller.backend.type  # state is READY → not None
         needed: set[tuple[BackendType, BackendType]] = {
             (a, b) for a in types_present for b in types_present if a != b
         }
