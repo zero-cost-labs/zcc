@@ -62,8 +62,15 @@ class Cluster(BaseModel):
 
         ``hosts`` always contains at least one element (enforced by
         ``min_length=1``), so ``hosts[0]`` is always safe to access on a
-        fully validated model instance.
+        fully validated model instance.  Do not call this property on a
+        partially constructed or invalidated model.
         """
+        if not self.hosts:
+            raise AttributeError(
+                "Cluster.backend is not accessible: 'hosts' is empty. "
+                "This property is only safe to call on a fully validated "
+                "Cluster instance."
+            )
         return self.hosts[0].backend
 
     @field_validator("hosts")

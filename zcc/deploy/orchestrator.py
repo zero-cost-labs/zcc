@@ -199,6 +199,16 @@ class DeployOrchestrator:
     # Backend registry helpers
     # ------------------------------------------------------------------
 
+    #: Factory registry mapping each known :class:`~zcc.models.backend.BackendType`
+    #: to a callable that accepts a
+    #: :class:`~zcc.models.backend.BackendConfig` and returns a
+    #: :class:`ClusterBackend`.  Add entries here to support new backend
+    #: types without changing :meth:`_build_backend_registry`.
+    _BACKEND_FACTORIES: dict = {
+        BackendType.K0S: K0sInstaller,
+        BackendType.SWARM: DockerSwarmBackend,
+    }
+
     def _build_backend_registry(
         self, override: ClusterBackend | None
     ) -> dict[BackendType, ClusterBackend]:
@@ -222,16 +232,15 @@ class DeployOrchestrator:
             bt = host.backend.type
             if bt in registry:
                 continue
-            if bt == BackendType.K0S:
-                registry[bt] = K0sInstaller(host.backend)
-            elif bt == BackendType.SWARM:
-                registry[bt] = DockerSwarmBackend(host.backend)
-            else:
+            factory = self._BACKEND_FACTORIES.get(bt)
+            if factory is None:
                 raise RuntimeError(
-                    f"Unknown backend type '{bt.value}' on host '{host.name}'. "
-                    "Add a backend constructor branch in "
-                    "DeployOrchestrator._build_backend_registry()."
+                    f"Unsupported backend type '{bt.value}' on host "
+                    f"'{host.name}'. Register a backend factory in "
+                    "DeployOrchestrator._BACKEND_FACTORIES to add support "
+                    "for this type."
                 )
+            registry[bt] = factory(host.backend)
         return registry
 
     def _backend_for(self, host: Host) -> ClusterBackend:
