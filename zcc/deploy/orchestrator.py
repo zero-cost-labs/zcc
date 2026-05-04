@@ -97,6 +97,19 @@ class DeployOrchestrator:
     def deploy(self) -> None:
         """Run the full cluster deployment.
 
+        Deployment proceeds in five sequential phases:
+
+        1. Install the backend on every host (parallel).
+        2. Bootstrap the primary controller and obtain join tokens.
+        3. Join remaining controller nodes (parallel).
+        4. Join non-controller nodes as workers (parallel).
+        5. Deploy each feature to its resolved target hosts (parallel).
+
+        Host :attr:`~zcc.models.state.HostState` and feature
+        :attr:`~zcc.models.state.FeatureState` fields are updated as each
+        step completes, which in turn advances :attr:`~zcc.models.cluster.Cluster.state`
+        from ``READY`` through ``DEPLOYING`` to ``DEPLOYED``.
+
         Raises
         ------
         DeploymentPendingError
@@ -168,14 +181,16 @@ class DeployOrchestrator:
             total = len(targets)
 
             def _deploy(
-                host: Host, feat: "Feature" = feature, n: int = total
+                host: Host, feat: "Feature" = feature, total_targets: int = total
             ) -> None:
                 with SSHClient(host) as ssh:
                     self._features.deploy(ssh, feat)
                 feat.deployed_to.append(host.name)
                 deployed = len(feat.deployed_to)
                 feat.deployment_state = (
-                    FeatureState.DEPLOYED if deployed >= n else FeatureState.PARTIAL
+                    FeatureState.DEPLOYED
+                    if deployed >= total_targets
+                    else FeatureState.PARTIAL
                 )
 
             self._run_parallel(_deploy, targets)

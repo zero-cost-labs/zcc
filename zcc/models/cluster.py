@@ -97,7 +97,7 @@ class Cluster(BaseModel):
         )
         all_features_deployed = all(
             f.deployment_state is FeatureState.DEPLOYED for f in self.features
-        ) if self.features else True
+        )
 
         if all_hosts_deployed and all_features_deployed:
             return ClusterState.DEPLOYED
@@ -189,7 +189,7 @@ class Cluster(BaseModel):
         if len(types_present) <= 1:
             return self
 
-        primary_type = self.primary_controller.backend.type  # state is READY → not None
+        primary_type = self.primary_controller.backend.type  # primary_controller is not None (verified above)
         needed: set[tuple[BackendType, BackendType]] = {
             (a, b) for a in types_present for b in types_present if a != b
         }
