@@ -284,16 +284,21 @@ class TestCluster:
         with pytest.raises(ValidationError):
             Cluster.model_validate({"name": "empty", "hosts": []})
 
-    def test_no_controller_label_fails(self):
-        with pytest.raises(ValidationError):
-            Cluster.model_validate(
-                {
-                    "name": "bad",
-                    "hosts": [
-                        {"name": "w1", "uri": "10.0.0.2", "labels": ["worker"]}
-                    ],
-                }
-            )
+    def test_no_controller_label_creates_draft_cluster(self):
+        """A cluster with no controller/sole host is valid but in DRAFT state."""
+        from zcc.models.state import ClusterState
+
+        cluster = Cluster.model_validate(
+            {
+                "name": "draft",
+                "hosts": [
+                    {"name": "w1", "uri": "10.0.0.2", "labels": ["worker"]}
+                ],
+            }
+        )
+        assert cluster.state is ClusterState.DRAFT
+        assert cluster.primary_controller is None
+        assert cluster.backend is None
 
     def test_sole_label_satisfies_controller_requirement(self):
         cluster = Cluster.model_validate(
@@ -754,3 +759,74 @@ class TestBackendConfig:
         )
         assert cluster.backend.type == BackendType.K0S
         assert cluster.primary_controller.name == "ctrl"
+
+
+# ---------------------------------------------------------------------------
+# ClusterState / DRAFT-READY state machine
+# ---------------------------------------------------------------------------
+
+
+class TestClusterState:
+    def _draft(self) -> Cluster:
+        return Cluster.model_validate(
+            {"name": "d", "hosts": [{"name": "w", "uri": "10.0.0.1", "labels": ["gpu"]}]}
+        )
+
+    def _ready(self) -> Cluster:
+        return Cluster.model_validate(
+            {"name": "r", "hosts": [{"name": "c", "uri": "10.0.0.1", "labels": ["controller"]}]}
+        )
+
+    def test_no_controller_is_draft(self):
+        from zcc.models.state import ClusterState
+        assert self._draft().state is ClusterState.DRAFT
+
+    def test_with_controller_is_ready(self):
+        from zcc.models.state import ClusterState
+        assert self._ready().state is ClusterState.READY
+
+    def test_draft_primary_controller_is_none(self):
+        assert self._draft().primary_controller is None
+
+    def test_draft_backend_is_none(self):
+        assert self._draft().backend is None
+
+    def test_sole_label_also_ready(self):
+        from zcc.models.state import ClusterState
+        cluster = Cluster.model_validate(
+            {"name": "s", "hosts": [{"name": "n", "uri": "10.0.0.1", "labels": ["sole"]}]}
+        )
+        assert cluster.state is ClusterState.READY
+
+    def test_draft_heterogeneous_no_recipe_required(self):
+        """DRAFT clusters skip translation coverage — authoritative backend unknown."""
+        cluster = Cluster.model_validate(
+            {
+                "name": "d",
+                "hosts": [
+                    {"name": "a", "uri": "10.0.0.1", "labels": ["gpu"], "backend": {"type": "k0s"}},
+                    {"name": "b", "uri": "10.0.0.2", "labels": ["storage"], "backend": {"type": "swarm"}},
+                ],
+            }
+        )
+        from zcc.models.state import ClusterState
+        assert cluster.state is ClusterState.DRAFT
+
+    def test_deploy_raises_when_draft(self):
+        from unittest.mock import MagicMock
+        from zcc.deploy.orchestrator import DeployOrchestrator, DeploymentPendingError
+
+        orch = DeployOrchestrator(self._draft(), backend=MagicMock())
+        with pytest.raises(DeploymentPendingError, match="DRAFT"):
+            orch.deploy()
+
+    def test_deployment_pending_error_message(self):
+        from unittest.mock import MagicMock
+        from zcc.deploy.orchestrator import DeployOrchestrator, DeploymentPendingError
+
+        cluster = self._draft()
+        orch = DeployOrchestrator(cluster, backend=MagicMock())
+        with pytest.raises(DeploymentPendingError) as exc_info:
+            orch.deploy()
+        assert cluster.name in str(exc_info.value)
+        assert "controller" in str(exc_info.value).lower()

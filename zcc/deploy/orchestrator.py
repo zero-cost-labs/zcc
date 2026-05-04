@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Callable
 
 from ..models.backend import BackendType
 from ..models.host import Host
+from ..models.state import ClusterState
 from .backend import ClusterBackend
 from .feature import FeatureDeployer
 from .k0s import K0sInstaller
@@ -22,78 +23,45 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class DeploymentPendingError(RuntimeError):
+    """Raised when deployment is attempted on a DRAFT cluster.
+
+    A cluster is in DRAFT state when no host carries a ``controller`` or
+    ``sole`` label.  Add a primary control node to transition the cluster
+    to READY and retry deployment.
+    """
+
+
 class DeployOrchestrator:
     """Orchestrates the full deployment of a :class:`~zcc.models.cluster.Cluster`.
+
+    Raises :exc:`DeploymentPendingError` when the cluster is in DRAFT state
+    (no primary control node assigned).
 
     **Cluster backend**
 
     The cluster's authoritative backend is determined by the **main control
-    node** — the first host in the manifest that carries a ``controller`` or
-    ``sole`` label.  Its
-    :class:`~zcc.models.backend.BackendType` drives the primary token-
-    issuance path.  Worker nodes and secondary controllers may run a
-    *different* backend type; when they do, a registered
-    :class:`~zcc.deploy.translation.BackendTranslator` is invoked to
-    translate join tokens across backend boundaries.
+    node** — the first host carrying a ``controller`` or ``sole`` label.
+    Worker nodes and secondary controllers may run a different backend type;
+    when they do a registered :class:`~zcc.deploy.translation.BackendTranslator`
+    translates join tokens across backend boundaries.
 
-    **Sole-node semantics**
-
-    A controller runs as *sole* (control-plane + workloads on one node)
-    when any of the following is true:
-
-    * The host explicitly carries the ``sole`` label, **or**
-    * The cluster contains no non-controller hosts (auto-sole topology)
-      and the host has not set ``no-sole: true``.
-
-    A host with ``no-sole: true`` always runs as a pure controller
-    regardless of topology.
-
-    **Label absorption**
-
-    Sole nodes act as a catch-all target for features whose labels do not
-    match any explicitly labelled host.  Once a non-controller node is
-    added that carries those labels the explicit match takes precedence and
-    the sole node no longer receives the feature.
-
-    **Deployment order**
+    **Deployment order** (READY clusters only)
 
     1. Install the backend on **all** hosts (parallel).
-    2. Bootstrap the primary controller/sole node → obtain controller +
-       worker tokens.
+    2. Bootstrap the primary controller → obtain controller + worker tokens.
     3. Join remaining controller nodes (parallel).
-    4. Join all non-controller nodes as workers (parallel).
-    5. Deploy features to their target hosts (per-feature, parallel).
-
-    **Heterogeneous backends**
-
-    When the cluster contains hosts with different
-    :class:`~zcc.models.backend.BackendType` values, a
-    :class:`~zcc.deploy.translation.BackendTranslator` must be registered
-    for every distinct ``(source, target)`` pair via the ``translators``
-    constructor parameter.  Without a matching translator the deployment
-    will raise :exc:`RuntimeError` when a cross-backend join is attempted.
-
-    .. note:: TODO(state-machine)
-
-        A future design may allow clusters to be defined before the main
-        control node is committed (draft / pending state).  In that case
-        :meth:`deploy` must check ``cluster.primary_controller`` and either
-        raise a user-friendly error or enqueue the deployment until a
-        controller is available.  The natural gate is at the top of
-        :meth:`deploy`, immediately before Step 1.
+    4. Join non-controller nodes as workers (parallel).
+    5. Deploy features to their target hosts (parallel).
 
     Parameters
     ----------
     cluster :
-        Fully validated :class:`~zcc.models.cluster.Cluster` to deploy.
+        Validated :class:`~zcc.models.cluster.Cluster` (DRAFT or READY).
     backend :
-        Optional single :class:`ClusterBackend` override.  When supplied
-        it is used for **all** hosts regardless of their declared backend
-        type.  Primarily useful for testing.
+        Optional :class:`ClusterBackend` override for all hosts (tests).
     translators :
-        Optional list of :class:`~zcc.deploy.translation.BackendTranslator`
-        instances.  Each translator bridges one ``(source, target)`` backend
-        type pair.  Required when the cluster defines heterogeneous backends.
+        Translators for heterogeneous ``(source, target)`` backend pairs.
     """
 
     def __init__(
@@ -119,30 +87,35 @@ class DeployOrchestrator:
     def _backend(self) -> ClusterBackend:
         """Return the backend for the primary control node's backend type.
 
-        The primary control node (``cluster.primary_controller``) determines
-        the cluster-level backend type.  This property returns the
-        :class:`ClusterBackend` registered for that type.
-
-        This property exists for backward compatibility with code and tests
-        that refer to ``orchestrator._backend``.  In heterogeneous clusters
-        use :meth:`_backend_for` to obtain the per-host backend.
-
-        .. note:: TODO(state-machine)
-
-            In a future deferred-deployment design this accessor could raise
-            when no primary controller has been committed yet.  Callers
-            driving deployment must check ``cluster.primary_controller``
-            before invoking :meth:`deploy` and wait / queue the job if the
-            controller is absent.
+        Only valid when the cluster is READY (primary controller present).
+        :meth:`deploy` enforces the READY gate before this is ever called.
         """
-        return self._backends[self.cluster.primary_controller.backend.type]
+        ctrl = self.cluster.primary_controller
+        if ctrl is None:
+            raise DeploymentPendingError(
+                f"Cluster '{self.cluster.name}' is in DRAFT state — no primary "
+                "control node assigned.  Add a controller/sole host first."
+            )
+        return self._backends[ctrl.backend.type]
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def deploy(self) -> None:
-        """Run the full cluster deployment."""
+        """Run the full cluster deployment.
+
+        Raises
+        ------
+        DeploymentPendingError
+            When the cluster is in DRAFT state (no primary control node).
+        """
+        if self.cluster.state is ClusterState.DRAFT:
+            raise DeploymentPendingError(
+                f"Cluster '{self.cluster.name}' is in DRAFT state — no primary "
+                "control node has been assigned yet.  Add a host labelled "
+                "'controller' or 'sole' and retry."
+            )
         logger.info("Starting deployment of cluster '%s'", self.cluster.name)
 
         controllers, non_controllers = self._split_hosts()
