@@ -129,12 +129,6 @@ class Cluster(BaseModel):
             Deployment code must check for that condition and wait.  See
             :attr:`primary_controller` for the full discussion.
         """
-        if not self.hosts:
-            raise AttributeError(
-                "Cluster.backend is not accessible: 'hosts' is empty. "
-                "This property is only safe to call on a fully validated "
-                "Cluster instance."
-            )
         return self.primary_controller.backend
 
     # ------------------------------------------------------------------

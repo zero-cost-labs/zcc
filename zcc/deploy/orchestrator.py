@@ -236,7 +236,7 @@ class DeployOrchestrator:
     #: :class:`~zcc.models.backend.BackendConfig` and returns a
     #: :class:`ClusterBackend`.  Add entries here to support new backend
     #: types without changing :meth:`_build_backend_registry`.
-    _BACKEND_FACTORIES: dict = {
+    _BACKEND_FACTORIES: dict[BackendType, type[ClusterBackend]] = {
         BackendType.K0S: K0sInstaller,
         BackendType.SWARM: DockerSwarmBackend,
     }
