@@ -25,6 +25,17 @@ logger = logging.getLogger(__name__)
 class DeployOrchestrator:
     """Orchestrates the full deployment of a :class:`~zcc.models.cluster.Cluster`.
 
+    **Cluster backend**
+
+    The cluster's authoritative backend is determined by the **main control
+    node** — the first host in the manifest that carries a ``controller`` or
+    ``sole`` label.  Its
+    :class:`~zcc.models.backend.BackendType` drives the primary token-
+    issuance path.  Worker nodes and secondary controllers may run a
+    *different* backend type; when they do, a registered
+    :class:`~zcc.deploy.translation.BackendTranslator` is invoked to
+    translate join tokens across backend boundaries.
+
     **Sole-node semantics**
 
     A controller runs as *sole* (control-plane + workloads on one node)
@@ -62,6 +73,15 @@ class DeployOrchestrator:
     constructor parameter.  Without a matching translator the deployment
     will raise :exc:`RuntimeError` when a cross-backend join is attempted.
 
+    .. note:: TODO(state-machine)
+
+        A future design may allow clusters to be defined before the main
+        control node is committed (draft / pending state).  In that case
+        :meth:`deploy` must check ``cluster.primary_controller`` and either
+        raise a user-friendly error or enqueue the deployment until a
+        controller is available.  The natural gate is at the top of
+        :meth:`deploy`, immediately before Step 1.
+
     Parameters
     ----------
     cluster :
@@ -97,13 +117,25 @@ class DeployOrchestrator:
 
     @property
     def _backend(self) -> ClusterBackend:
-        """Return the backend for the primary (first-host) backend type.
+        """Return the backend for the primary control node's backend type.
+
+        The primary control node (``cluster.primary_controller``) determines
+        the cluster-level backend type.  This property returns the
+        :class:`ClusterBackend` registered for that type.
 
         This property exists for backward compatibility with code and tests
         that refer to ``orchestrator._backend``.  In heterogeneous clusters
-        use :meth:`_backend_for` to obtain the correct backend per host.
+        use :meth:`_backend_for` to obtain the per-host backend.
+
+        .. note:: TODO(state-machine)
+
+            In a future deferred-deployment design this accessor could raise
+            when no primary controller has been committed yet.  Callers
+            driving deployment must check ``cluster.primary_controller``
+            before invoking :meth:`deploy` and wait / queue the job if the
+            controller is absent.
         """
-        return self._backends[self.cluster.hosts[0].backend.type]
+        return self._backends[self.cluster.primary_controller.backend.type]
 
     # ------------------------------------------------------------------
     # Public API

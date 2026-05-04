@@ -11,13 +11,18 @@ from pydantic import BaseModel, ConfigDict, model_validator
 class BackendType(str, Enum):
     """Identifies which cluster-backend technology a host uses.
 
-    A cluster is **homogeneous** by default: all hosts must declare the
-    same :class:`BackendType`.  When hosts with *different* types are
-    needed a :class:`~zcc.models.translation.TranslationRecipe` must be
-    provided for every distinct ``(source, target)`` pair — otherwise the
-    cluster fails validation.
+    The cluster-wide authoritative backend is determined by the **main
+    control node** — the first host in the cluster manifest that carries a
+    ``controller`` or ``sole`` label (see :attr:`~zcc.models.cluster.Cluster.primary_controller`).
+    Other hosts (workers, secondary controllers) may carry a *different*
+    ``BackendType``; when they do, a
+    :class:`~zcc.models.translation.TranslationRecipe` must be declared for
+    every distinct ``(source, target)`` pair in the cluster, and a matching
+    :class:`~zcc.deploy.translation.BackendTranslator` must be registered
+    with the :class:`~zcc.deploy.orchestrator.DeployOrchestrator` before
+    deployment.
 
-    .. note:: Intrinsic limitations
+    .. note:: Intrinsic cross-backend limitations
 
         k0s and Docker Swarm are architecturally incompatible:
 
@@ -51,15 +56,21 @@ class BackendType(str, Enum):
 class BackendConfig(BaseModel):
     """Backend-specific deployment configuration for a single host.
 
-    ``type`` selects which cluster-backend technology the host runs
-    (default: :attr:`BackendType.K0S`).  All hosts in a cluster must
-    declare the same ``type`` unless a
-    :class:`~zcc.models.translation.TranslationRecipe` covering all
-    ``(source, target)`` pairs is supplied at the cluster level.
+    ``type`` selects which cluster-backend technology **this host** runs
+    (default: :attr:`BackendType.K0S`).
 
-    Because ``BackendConfig`` is host-scoped, different hosts within the
-    *same* backend type may carry different ``arguments`` and config files
-    (e.g. a GPU node with a custom ``containerd.toml``).
+    The **cluster-level** backend is determined by the main control node
+    (see :attr:`~zcc.models.cluster.Cluster.primary_controller` and
+    :attr:`~zcc.models.cluster.Cluster.backend`).  Per-host backend types
+    may differ from the primary controller's type; when they do a
+    :class:`~zcc.models.translation.TranslationRecipe` is required for
+    each ``(source, target)`` pair and a matching
+    :class:`~zcc.deploy.translation.BackendTranslator` must be registered
+    before deployment.
+
+    Because ``BackendConfig`` is host-scoped, different hosts — even those
+    sharing the *same* backend type — may carry different ``arguments`` and
+    config files (e.g. a GPU worker with a custom ``containerd.toml``).
 
     ``arguments`` holds arbitrary key→value pairs forwarded to the backend
     as CLI flags or configuration options.  Every other key is treated as a

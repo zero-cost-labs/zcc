@@ -571,7 +571,7 @@ class TestBackendConfig:
         unless a translation recipe is provided for every (source, target) pair."""
         from pydantic import ValidationError
 
-        with pytest.raises(ValidationError, match="Heterogeneous backend types"):
+        with pytest.raises(ValidationError, match="main control node"):
             Cluster.model_validate(
                 {
                     "name": "t",
@@ -625,7 +625,7 @@ class TestBackendConfig:
         cluster validator must still reject the definition."""
         from pydantic import ValidationError
 
-        with pytest.raises(ValidationError, match="Heterogeneous backend types"):
+        with pytest.raises(ValidationError, match="translation recipe"):
             Cluster.model_validate(
                 {
                     "name": "partial",
@@ -680,3 +680,77 @@ class TestBackendConfig:
         recipe = TranslationRecipe.model_validate({"source": "k0s", "target": "swarm"})
         assert recipe.source.value == "k0s"
         assert recipe.target.value == "swarm"
+
+    def test_primary_controller_is_first_controller_host(self):
+        """primary_controller returns the first host with a controller/sole label."""
+        cluster = Cluster.model_validate(
+            {
+                "name": "t",
+                "hosts": [
+                    {"name": "wrk", "uri": "10.0.0.1", "labels": ["compute"]},
+                    {"name": "ctrl", "uri": "10.0.0.2", "labels": ["controller"]},
+                ],
+            }
+        )
+        assert cluster.primary_controller.name == "ctrl"
+
+    def test_cluster_backend_uses_primary_controller_not_hosts0(self):
+        """When the controller is not the first host, Cluster.backend still
+        returns the controller's backend config — not hosts[0]'s."""
+        cluster = Cluster.model_validate(
+            {
+                "name": "t",
+                "hosts": [
+                    # Worker listed first — no controller label.
+                    {
+                        "name": "wrk",
+                        "uri": "10.0.0.1",
+                        "labels": ["compute"],
+                        "backend": {"arguments": {"--network": "flannel"}},
+                    },
+                    # Controller listed second.
+                    {
+                        "name": "ctrl",
+                        "uri": "10.0.0.2",
+                        "labels": ["controller"],
+                        "backend": {"arguments": {"--network": "calico"}},
+                    },
+                ],
+            }
+        )
+        # cluster.backend must reflect the controller, not the worker.
+        assert cluster.backend.arguments == {"--network": "calico"}
+        assert cluster.primary_controller.name == "ctrl"
+
+    def test_cluster_backend_type_from_primary_controller(self):
+        """cluster.backend.type is the primary controller's type, not the
+        first host's type when they differ."""
+        from zcc.models.backend import BackendType
+
+        cluster = Cluster.model_validate(
+            {
+                "name": "mixed",
+                "hosts": [
+                    # Worker first with swarm type.
+                    {
+                        "name": "wrk",
+                        "uri": "10.0.0.1",
+                        "labels": ["compute"],
+                        "backend": {"type": "swarm"},
+                    },
+                    # Controller second with k0s type (the authoritative backend).
+                    {
+                        "name": "ctrl",
+                        "uri": "10.0.0.2",
+                        "labels": ["controller"],
+                        "backend": {"type": "k0s"},
+                    },
+                ],
+                "translations": [
+                    {"source": "k0s", "target": "swarm"},
+                    {"source": "swarm", "target": "k0s"},
+                ],
+            }
+        )
+        assert cluster.backend.type == BackendType.K0S
+        assert cluster.primary_controller.name == "ctrl"
