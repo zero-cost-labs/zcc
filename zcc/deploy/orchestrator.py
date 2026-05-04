@@ -8,11 +8,12 @@ from typing import TYPE_CHECKING, Callable
 
 from ..models.backend import BackendType
 from ..models.host import Host
-from ..models.state import ClusterState
+from ..models.state import ClusterState, FeatureState, HostState
 from .backend import ClusterBackend
 from .feature import FeatureDeployer
 from .k0s import K0sInstaller
 from .ssh import SSHClient
+from .state import DeploymentPendingError
 from .swarm import DockerSwarmBackend
 
 if TYPE_CHECKING:
@@ -21,15 +22,6 @@ if TYPE_CHECKING:
     from .translation import BackendTranslator
 
 logger = logging.getLogger(__name__)
-
-
-class DeploymentPendingError(RuntimeError):
-    """Raised when deployment is attempted on a DRAFT cluster.
-
-    A cluster is in DRAFT state when no host carries a ``controller`` or
-    ``sole`` label.  Add a primary control node to transition the cluster
-    to READY and retry deployment.
-    """
 
 
 class DeployOrchestrator:
@@ -121,6 +113,7 @@ class DeployOrchestrator:
         controllers, non_controllers = self._split_hosts()
 
         # Step 1 — install the backend on every node in parallel.
+        # Each host transitions PENDING → DEPLOYING as installation starts.
         self._run_parallel(self._install_on, self.cluster.hosts)
 
         # Step 2 — bootstrap the primary controller.
@@ -130,6 +123,7 @@ class DeployOrchestrator:
             controller_token, worker_token = primary_backend.init_controller(
                 ssh, enable_workers=self._is_sole(primary)
             )
+        primary.deployment_state = HostState.DEPLOYED
 
         # Step 3 — join remaining controllers in parallel.
         def _init_ctrl(host: Host) -> None:
@@ -140,6 +134,7 @@ class DeployOrchestrator:
                 self._backend_for(host).join_controller(ssh, join_token)
                 if self._is_sole(host):
                     self._backend_for(host).enable_worker_scheduling(ssh)
+            host.deployment_state = HostState.DEPLOYED
 
         if controller_token.strip() and controllers[1:]:
             self._run_parallel(_init_ctrl, controllers[1:])
@@ -152,16 +147,36 @@ class DeployOrchestrator:
                 )
                 with SSHClient(host) as ssh:
                     self._backend_for(host).join_worker(ssh, join_token)
+                host.deployment_state = HostState.DEPLOYED
 
             self._run_parallel(_join, non_controllers)
+
+        # Any host that was only installed (empty token edge-case) is now done.
+        for host in self.cluster.hosts:
+            if host.deployment_state is HostState.DEPLOYING:
+                host.deployment_state = HostState.DEPLOYED
 
         # Step 5 — deploy features; each feature fans out to targets in parallel.
         for feature in self.cluster.features:
             targets = self._resolve_targets(feature)
 
-            def _deploy(host: Host, feat: "Feature" = feature) -> None:
+            if not targets:
+                # No matching hosts — trivially complete.
+                feature.deployment_state = FeatureState.DEPLOYED
+                continue
+
+            total = len(targets)
+
+            def _deploy(
+                host: Host, feat: "Feature" = feature, n: int = total
+            ) -> None:
                 with SSHClient(host) as ssh:
                     self._features.deploy(ssh, feat)
+                feat.deployed_to.append(host.name)
+                deployed = len(feat.deployed_to)
+                feat.deployment_state = (
+                    FeatureState.DEPLOYED if deployed >= n else FeatureState.PARTIAL
+                )
 
             self._run_parallel(_deploy, targets)
 
@@ -390,6 +405,7 @@ class DeployOrchestrator:
         return targets
 
     def _install_on(self, host: Host) -> None:
+        host.deployment_state = HostState.DEPLOYING
         with SSHClient(host) as ssh:
             self._backend_for(host).install(ssh)
 

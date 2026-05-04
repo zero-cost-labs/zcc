@@ -814,7 +814,8 @@ class TestClusterState:
 
     def test_deploy_raises_when_draft(self):
         from unittest.mock import MagicMock
-        from zcc.deploy.orchestrator import DeployOrchestrator, DeploymentPendingError
+        from zcc.deploy.orchestrator import DeployOrchestrator
+        from zcc.deploy.state import DeploymentPendingError
 
         orch = DeployOrchestrator(self._draft(), backend=MagicMock())
         with pytest.raises(DeploymentPendingError, match="DRAFT"):
@@ -822,7 +823,8 @@ class TestClusterState:
 
     def test_deployment_pending_error_message(self):
         from unittest.mock import MagicMock
-        from zcc.deploy.orchestrator import DeployOrchestrator, DeploymentPendingError
+        from zcc.deploy.orchestrator import DeployOrchestrator
+        from zcc.deploy.state import DeploymentPendingError
 
         cluster = self._draft()
         orch = DeployOrchestrator(cluster, backend=MagicMock())
@@ -830,3 +832,153 @@ class TestClusterState:
             orch.deploy()
         assert cluster.name in str(exc_info.value)
         assert "controller" in str(exc_info.value).lower()
+
+
+# ---------------------------------------------------------------------------
+# HostState — deployment tracking field on Host
+# ---------------------------------------------------------------------------
+
+
+class TestHostState:
+    def _host(self, **kw) -> "Host":
+        data = {"name": "h", "uri": "10.0.0.1", "labels": ["controller"]}
+        data.update(kw)
+        return Host.model_validate(data)
+
+    def test_default_is_pending(self):
+        from zcc.models.state import HostState
+        assert self._host().deployment_state is HostState.PENDING
+
+    def test_deployment_state_is_mutable(self):
+        from zcc.models.state import HostState
+        host = self._host()
+        host.deployment_state = HostState.DEPLOYING
+        assert host.deployment_state is HostState.DEPLOYING
+        host.deployment_state = HostState.DEPLOYED
+        assert host.deployment_state is HostState.DEPLOYED
+
+    def test_deployment_state_excluded_from_serialization(self):
+        from zcc.models.state import HostState
+        host = self._host()
+        host.deployment_state = HostState.DEPLOYING
+        dumped = host.model_dump()
+        assert "deployment_state" not in dumped
+
+
+# ---------------------------------------------------------------------------
+# FeatureState — deployment tracking fields on Feature
+# ---------------------------------------------------------------------------
+
+
+class TestFeatureState:
+    def _feature(self) -> "Feature":
+        return Feature.model_validate({"name": "app", "labels": ["worker"]})
+
+    def test_default_state_is_pending(self):
+        from zcc.models.state import FeatureState
+        assert self._feature().deployment_state is FeatureState.PENDING
+
+    def test_deployed_to_starts_empty(self):
+        assert self._feature().deployed_to == []
+
+    def test_deployment_state_is_mutable(self):
+        from zcc.models.state import FeatureState
+        feat = self._feature()
+        feat.deployment_state = FeatureState.PARTIAL
+        assert feat.deployment_state is FeatureState.PARTIAL
+        feat.deployment_state = FeatureState.DEPLOYED
+        assert feat.deployment_state is FeatureState.DEPLOYED
+
+    def test_deployed_to_is_mutable(self):
+        feat = self._feature()
+        feat.deployed_to.append("node-1")
+        feat.deployed_to.append("node-2")
+        assert feat.deployed_to == ["node-1", "node-2"]
+
+    def test_tracking_fields_excluded_from_serialization(self):
+        from zcc.models.state import FeatureState
+        feat = self._feature()
+        feat.deployment_state = FeatureState.PARTIAL
+        feat.deployed_to.append("node-1")
+        dumped = feat.model_dump()
+        assert "deployment_state" not in dumped
+        assert "deployed_to" not in dumped
+
+
+# ---------------------------------------------------------------------------
+# ClusterState DEPLOYING / DEPLOYED — derived from resource states
+# ---------------------------------------------------------------------------
+
+
+class TestClusterStateDeploymentPhases:
+    def _cluster(self) -> "Cluster":
+        return Cluster.model_validate(
+            {
+                "name": "c",
+                "hosts": [
+                    {"name": "ctrl", "uri": "10.0.0.1", "labels": ["controller"]},
+                    {"name": "wrk", "uri": "10.0.0.2", "labels": ["worker"]},
+                ],
+                "features": [
+                    {"name": "app", "labels": ["worker"]},
+                ],
+            }
+        )
+
+    def test_fresh_cluster_with_controller_is_ready(self):
+        from zcc.models.state import ClusterState
+        assert self._cluster().state is ClusterState.READY
+
+    def test_any_host_deploying_makes_cluster_deploying(self):
+        from zcc.models.state import ClusterState, HostState
+        cluster = self._cluster()
+        cluster.hosts[0].deployment_state = HostState.DEPLOYING
+        assert cluster.state is ClusterState.DEPLOYING
+
+    def test_all_hosts_deployed_but_features_pending_is_ready(self):
+        from zcc.models.state import ClusterState, HostState
+        cluster = self._cluster()
+        for h in cluster.hosts:
+            h.deployment_state = HostState.DEPLOYED
+        assert cluster.state is ClusterState.READY
+
+    def test_all_hosts_and_features_deployed_is_deployed(self):
+        from zcc.models.state import ClusterState, FeatureState, HostState
+        cluster = self._cluster()
+        for h in cluster.hosts:
+            h.deployment_state = HostState.DEPLOYED
+        for f in cluster.features:
+            f.deployment_state = FeatureState.DEPLOYED
+        assert cluster.state is ClusterState.DEPLOYED
+
+    def test_no_features_all_hosts_deployed_is_deployed(self):
+        from zcc.models.state import ClusterState, HostState
+        cluster = Cluster.model_validate(
+            {
+                "name": "c",
+                "hosts": [
+                    {"name": "ctrl", "uri": "10.0.0.1", "labels": ["sole"]},
+                ],
+            }
+        )
+        cluster.hosts[0].deployment_state = HostState.DEPLOYED
+        assert cluster.state is ClusterState.DEPLOYED
+
+    def test_deploying_takes_precedence_over_some_deployed(self):
+        from zcc.models.state import ClusterState, HostState
+        cluster = self._cluster()
+        cluster.hosts[0].deployment_state = HostState.DEPLOYED
+        cluster.hosts[1].deployment_state = HostState.DEPLOYING
+        assert cluster.state is ClusterState.DEPLOYING
+
+    def test_draft_even_when_hosts_have_deploying_state(self):
+        """DRAFT config check wins regardless of runtime state fields."""
+        from zcc.models.state import ClusterState, HostState
+        cluster = Cluster.model_validate(
+            {
+                "name": "no-ctrl",
+                "hosts": [{"name": "w", "uri": "10.0.0.1", "labels": ["gpu"]}],
+            }
+        )
+        cluster.hosts[0].deployment_state = HostState.DEPLOYING
+        assert cluster.state is ClusterState.DRAFT

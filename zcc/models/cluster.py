@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from .backend import BackendConfig, BackendType
 from .feature import Feature
 from .host import Host
-from .state import ClusterState
+from .state import ClusterState, FeatureState, HostState
 from .translation import TranslationRecipe
 
 
@@ -67,16 +67,42 @@ class Cluster(BaseModel):
     def state(self) -> ClusterState:
         """Current lifecycle state of this cluster.
 
-        :attr:`~zcc.models.state.ClusterState.DRAFT` when no host carries
-        a ``controller`` or ``sole`` label; deployment is deferred.
-        :attr:`~zcc.models.state.ClusterState.READY` once a primary
-        control node is present.
+        The state is derived lazily from the cluster's configuration and
+        the runtime deployment-tracking fields on its hosts and features.
+
+        :attr:`~zcc.models.state.ClusterState.DRAFT`
+            No host carries a ``controller`` or ``sole`` label; deployment
+            is deferred regardless of any other field values.
+        :attr:`~zcc.models.state.ClusterState.READY`
+            A primary control node is present and no deployment has
+            started yet (all hosts are still
+            :attr:`~zcc.models.state.HostState.PENDING`).
+        :attr:`~zcc.models.state.ClusterState.DEPLOYING`
+            At least one host is currently being installed or joined.
+        :attr:`~zcc.models.state.ClusterState.DEPLOYED`
+            Every host has reached
+            :attr:`~zcc.models.state.HostState.DEPLOYED` **and** every
+            feature has reached
+            :attr:`~zcc.models.state.FeatureState.DEPLOYED` (vacuously
+            true when there are no features).
         """
-        return (
-            ClusterState.READY
-            if any(h.has_label("controller", "sole") for h in self.hosts)
-            else ClusterState.DRAFT
+        if not any(h.has_label("controller", "sole") for h in self.hosts):
+            return ClusterState.DRAFT
+
+        if any(h.deployment_state is HostState.DEPLOYING for h in self.hosts):
+            return ClusterState.DEPLOYING
+
+        all_hosts_deployed = all(
+            h.deployment_state is HostState.DEPLOYED for h in self.hosts
         )
+        all_features_deployed = all(
+            f.deployment_state is FeatureState.DEPLOYED for f in self.features
+        ) if self.features else True
+
+        if all_hosts_deployed and all_features_deployed:
+            return ClusterState.DEPLOYED
+
+        return ClusterState.READY
 
     # ------------------------------------------------------------------
     # Convenience accessors
@@ -156,7 +182,7 @@ class Cluster(BaseModel):
             When heterogeneous backend types are found and one or more
             pairs lack a translation recipe.
         """
-        if self.state is ClusterState.DRAFT:
+        if self.primary_controller is None:
             return self  # authoritative backend unknown — check deferred
 
         types_present: set[BackendType] = {h.backend.type for h in self.hosts}
