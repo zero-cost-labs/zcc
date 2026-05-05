@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, model_validator
 
+from .state import FeatureState
+
 
 class Feature(BaseModel):
     """
@@ -40,6 +42,10 @@ class Feature(BaseModel):
     locations: list[str] = []
     install_cmds: list[str] = Field(default=[], alias="install-cmds")
     init_cmds: list[str] = Field(default=[], alias="init-cmds")
+
+    # Runtime deployment tracking — excluded from serialization.
+    deployment_state: FeatureState = Field(default=FeatureState.PENDING, exclude=True)
+    deployed_to: list[str] = Field(default_factory=list, exclude=True)
 
     model_config = {"populate_by_name": True}
 

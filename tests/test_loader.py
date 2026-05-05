@@ -35,8 +35,11 @@ class TestLoadCluster:
             load_cluster(FIXTURES / "invalid-no-roles.yaml")
 
     def test_invalid_no_controller(self):
-        with pytest.raises(ConfigError):
-            load_cluster(FIXTURES / "invalid-no-controller.yaml")
+        """A cluster without a controller is now valid (DRAFT state)."""
+        from zcc.models.state import ClusterState
+
+        cluster = load_cluster(FIXTURES / "invalid-no-controller.yaml")
+        assert cluster.state is ClusterState.DRAFT
 
     def test_file_not_found(self):
         with pytest.raises(ConfigError, match="Cannot read"):

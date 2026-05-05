@@ -487,3 +487,181 @@ class TestRunParallel:
         with pytest.raises(RuntimeError, match="2 deployment errors"):
             orch._run_parallel(boom, hosts)
 
+
+# ---------------------------------------------------------------------------
+# State transitions driven by DeployOrchestrator.deploy()
+# ---------------------------------------------------------------------------
+
+
+def _make_dummy_ssh_patcher(monkeypatch):
+    """Return a DummySSH class and patch SSHClient with it."""
+    class DummySSH:
+        def __init__(self, host):
+            self.host = host
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+    monkeypatch.setattr("zcc.deploy.orchestrator.SSHClient", DummySSH)
+    return DummySSH
+
+
+class TestStateTransitions:
+    """Verify that deploy() drives host and feature state transitions."""
+
+    def _deploy_cluster(self, monkeypatch, raw: dict) -> "Cluster":
+        """Run a mocked full deployment and return the cluster."""
+        cluster = _make_cluster(raw)
+        orch = DeployOrchestrator(cluster)
+
+        monkeypatch.setattr(
+            DeployOrchestrator, "_run_parallel",
+            lambda self, fn, items: [fn(i) for i in items],
+        )
+        monkeypatch.setattr(DeployOrchestrator, "_install_on", _patched_install_on)
+        _make_dummy_ssh_patcher(monkeypatch)
+
+        orch._backend.init_controller = lambda ssh, **kw: ("ctrl-tok", "wrk-tok")
+        orch._backend.join_controller = lambda ssh, token: None
+        orch._backend.join_worker = lambda ssh, token: None
+        orch._backend.enable_worker_scheduling = lambda ssh: None
+        orch._features.deploy = lambda ssh, feat: None
+
+        orch.deploy()
+        return cluster
+
+    def test_all_hosts_deployed_after_deploy(self, monkeypatch):
+        from zcc.models.state import HostState
+        cluster = self._deploy_cluster(
+            monkeypatch,
+            {
+                "name": "t",
+                "hosts": [
+                    {"name": "c", "uri": "10.0.0.1", "labels": ["controller"]},
+                    {"name": "w", "uri": "10.0.0.2", "labels": ["worker"]},
+                ],
+            },
+        )
+        for host in cluster.hosts:
+            assert host.deployment_state is HostState.DEPLOYED
+
+    def test_cluster_state_is_deployed_after_deploy(self, monkeypatch):
+        from zcc.models.state import ClusterState
+        cluster = self._deploy_cluster(
+            monkeypatch,
+            {
+                "name": "t",
+                "hosts": [
+                    {"name": "c", "uri": "10.0.0.1", "labels": ["controller"]},
+                ],
+            },
+        )
+        assert cluster.state is ClusterState.DEPLOYED
+
+    def test_features_deployed_after_deploy(self, monkeypatch):
+        from zcc.models.state import FeatureState
+        cluster = self._deploy_cluster(
+            monkeypatch,
+            {
+                "name": "t",
+                "hosts": [
+                    {"name": "c", "uri": "10.0.0.1", "labels": ["controller", "app"]},
+                ],
+                "features": [{"name": "app", "labels": ["app"]}],
+            },
+        )
+        assert cluster.features[0].deployment_state is FeatureState.DEPLOYED
+        assert "c" in cluster.features[0].deployed_to
+
+    def test_feature_with_no_targets_is_deployed(self, monkeypatch):
+        """A feature that has no matching hosts is trivially DEPLOYED."""
+        from zcc.models.state import FeatureState
+        cluster = self._deploy_cluster(
+            monkeypatch,
+            {
+                "name": "t",
+                "hosts": [
+                    {"name": "c", "uri": "10.0.0.1", "labels": ["controller"], "no-sole": True},
+                ],
+                "features": [{"name": "gpu-app", "labels": ["gpu"]}],
+            },
+        )
+        assert cluster.features[0].deployment_state is FeatureState.DEPLOYED
+
+    def test_feature_partial_state_during_multi_host_deploy(self, monkeypatch):
+        """deployed_to tracks each host; state becomes DEPLOYED when all done."""
+        from zcc.models.state import FeatureState
+        cluster = _make_cluster(
+            {
+                "name": "t",
+                "hosts": [
+                    {"name": "c", "uri": "10.0.0.1", "labels": ["controller", "app"]},
+                    {"name": "w", "uri": "10.0.0.2", "labels": ["worker", "app"]},
+                ],
+                "features": [{"name": "app", "labels": ["app"]}],
+            }
+        )
+        orch = DeployOrchestrator(cluster)
+
+        monkeypatch.setattr(
+            DeployOrchestrator, "_run_parallel",
+            lambda self, fn, items: [fn(i) for i in items],
+        )
+        monkeypatch.setattr(DeployOrchestrator, "_install_on", _patched_install_on)
+        _make_dummy_ssh_patcher(monkeypatch)
+
+        orch._backend.init_controller = lambda ssh, **kw: ("ct", "wt")
+        orch._backend.join_controller = lambda ssh, token: None
+        orch._backend.join_worker = lambda ssh, token: None
+        orch._backend.enable_worker_scheduling = lambda ssh: None
+        orch._features.deploy = lambda ssh, feat: None
+
+        orch.deploy()
+
+        feat = cluster.features[0]
+        assert feat.deployment_state is FeatureState.DEPLOYED
+        assert sorted(feat.deployed_to) == ["c", "w"]
+
+    def test_hosts_start_deploying_during_install(self, monkeypatch):
+        """Hosts must be DEPLOYING after _install_on, before join steps."""
+        from zcc.models.state import HostState
+        cluster = _make_cluster(
+            {
+                "name": "t",
+                "hosts": [
+                    {"name": "c", "uri": "10.0.0.1", "labels": ["sole"]},
+                ],
+            }
+        )
+        states_during_install: list[HostState] = []
+        original_install = DeployOrchestrator._install_on
+
+        def tracking_install(self, host):
+            original_install(self, host)
+            states_during_install.append(host.deployment_state)
+
+        orch = DeployOrchestrator(cluster)
+        monkeypatch.setattr(
+            DeployOrchestrator, "_run_parallel",
+            lambda self, fn, items: [fn(i) for i in items],
+        )
+        monkeypatch.setattr(DeployOrchestrator, "_install_on", tracking_install)
+        _make_dummy_ssh_patcher(monkeypatch)
+
+        orch._backend.install = lambda ssh: None
+        orch._backend.init_controller = lambda ssh, **kw: ("ct", "wt")
+        orch._backend.enable_worker_scheduling = lambda ssh: None
+        orch._features.deploy = lambda ssh, feat: None
+
+        orch.deploy()
+
+        assert HostState.DEPLOYING in states_during_install
+
+
+def _patched_install_on(self, host):
+    """Stand-in for _install_on that marks DEPLOYING without SSH."""
+    from zcc.models.state import HostState
+    host.deployment_state = HostState.DEPLOYING

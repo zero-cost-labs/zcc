@@ -10,6 +10,7 @@ import click
 from . import __version__
 from .loader import ConfigError, load_cluster
 from .deploy.orchestrator import DeployOrchestrator
+from .deploy.state import DeploymentPendingError
 
 
 @click.group()
@@ -44,6 +45,7 @@ def validate(config: str) -> None:
 
     click.secho(f"✓  Cluster '{cluster.name}' is valid", fg="green")
     click.echo(f"   Version  : {cluster.version}")
+    click.echo(f"   State    : {cluster.state.value}")
     click.echo(f"   Hosts    : {len(cluster.hosts)}")
     click.echo(f"   Features : {len(cluster.features)}")
 
@@ -99,6 +101,9 @@ def deploy(config: str, dry_run: bool) -> None:
 
     try:
         orchestrator.deploy()
+    except DeploymentPendingError as exc:
+        click.secho(f"⚠  Deployment deferred: {exc}", fg="yellow", err=True)
+        sys.exit(2)
     except Exception as exc:  # noqa: BLE001
         click.secho(f"✗  Deployment failed: {exc}", fg="red", err=True)
         sys.exit(1)

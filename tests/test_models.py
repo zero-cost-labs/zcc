@@ -284,16 +284,21 @@ class TestCluster:
         with pytest.raises(ValidationError):
             Cluster.model_validate({"name": "empty", "hosts": []})
 
-    def test_no_controller_label_fails(self):
-        with pytest.raises(ValidationError):
-            Cluster.model_validate(
-                {
-                    "name": "bad",
-                    "hosts": [
-                        {"name": "w1", "uri": "10.0.0.2", "labels": ["worker"]}
-                    ],
-                }
-            )
+    def test_no_controller_label_creates_draft_cluster(self):
+        """A cluster with no controller/sole host is valid but in DRAFT state."""
+        from zcc.models.state import ClusterState
+
+        cluster = Cluster.model_validate(
+            {
+                "name": "draft",
+                "hosts": [
+                    {"name": "w1", "uri": "10.0.0.2", "labels": ["worker"]}
+                ],
+            }
+        )
+        assert cluster.state is ClusterState.DRAFT
+        assert cluster.primary_controller is None
+        assert cluster.backend is None
 
     def test_sole_label_satisfies_controller_requirement(self):
         cluster = Cluster.model_validate(
@@ -475,7 +480,7 @@ class TestBackendConfig:
             BackendConfig.model_validate({"k0s.yaml": {"nested": "dict"}})
 
     def test_cluster_backend_defaults_to_empty(self):
-        """Cluster.backend defaults to an empty BackendConfig when omitted."""
+        """Cluster.backend defaults to an empty BackendConfig when host omits it."""
         cluster = Cluster.model_validate(
             {
                 "name": "t",
@@ -486,15 +491,494 @@ class TestBackendConfig:
         assert cluster.backend.config_files == {}
 
     def test_cluster_backend_parses_arguments_and_files(self):
+        """Cluster.backend is derived from the host's backend configuration."""
         cluster = Cluster.model_validate(
             {
                 "name": "t",
-                "hosts": [{"name": "h", "uri": "10.0.0.1", "labels": ["controller"]}],
-                "backend": {
-                    "arguments": {"--network": "calico"},
-                    "k0s.yaml": "apiVersion: k0s.k0sproject.io/v1beta1\n",
-                },
+                "hosts": [
+                    {
+                        "name": "h",
+                        "uri": "10.0.0.1",
+                        "labels": ["controller"],
+                        "backend": {
+                            "arguments": {"--network": "calico"},
+                            "k0s.yaml": "apiVersion: k0s.k0sproject.io/v1beta1\n",
+                        },
+                    }
+                ],
             }
         )
         assert cluster.backend.arguments == {"--network": "calico"}
         assert "k0s.yaml" in cluster.backend.config_files
+
+    def test_host_backend_defaults_to_empty(self):
+        """Host.backend defaults to an empty BackendConfig when omitted."""
+        host = Host.model_validate(
+            {"name": "h", "uri": "10.0.0.1", "labels": ["controller"]}
+        )
+        assert host.backend.arguments == {}
+        assert host.backend.config_files == {}
+
+    def test_host_backend_parses_arguments(self):
+        """Host.backend stores backend arguments correctly."""
+        host = Host.model_validate(
+            {
+                "name": "h",
+                "uri": "10.0.0.1",
+                "labels": ["controller"],
+                "backend": {"arguments": {"--network": "calico"}},
+            }
+        )
+        assert host.backend.arguments == {"--network": "calico"}
+
+    def test_host_backend_parses_config_files(self):
+        """Host.backend stores config file entries correctly."""
+        host = Host.model_validate(
+            {
+                "name": "h",
+                "uri": "10.0.0.1",
+                "labels": ["controller"],
+                "backend": {"k0s.yaml": "apiVersion: k0s.k0sproject.io/v1beta1\n"},
+            }
+        )
+        assert host.backend.config_files == {
+            "k0s.yaml": "apiVersion: k0s.k0sproject.io/v1beta1\n"
+        }
+
+    def test_cluster_different_config_same_type_valid(self):
+        """A cluster where hosts share the same backend type but have different
+        per-host arguments/config files is now valid (config is host-scoped)."""
+        cluster = Cluster.model_validate(
+            {
+                "name": "t",
+                "hosts": [
+                    {
+                        "name": "ctrl",
+                        "uri": "10.0.0.1",
+                        "labels": ["controller"],
+                        "backend": {"arguments": {"--network": "calico"}},
+                    },
+                    {
+                        "name": "wrk",
+                        "uri": "10.0.0.2",
+                        "labels": ["worker"],
+                        "backend": {"arguments": {"--network": "flannel"}},
+                    },
+                ],
+            }
+        )
+        # Both hosts still have the same backend type (k0s default).
+        assert cluster.hosts[0].backend.type.value == "k0s"
+        assert cluster.hosts[1].backend.type.value == "k0s"
+
+    def test_cluster_different_backend_types_without_recipe_fail(self):
+        """A cluster where hosts use different backend types must be rejected
+        unless a translation recipe is provided for every (source, target) pair."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="main control node"):
+            Cluster.model_validate(
+                {
+                    "name": "t",
+                    "hosts": [
+                        {
+                            "name": "ctrl",
+                            "uri": "10.0.0.1",
+                            "labels": ["controller"],
+                            "backend": {"type": "k0s"},
+                        },
+                        {
+                            "name": "wrk",
+                            "uri": "10.0.0.2",
+                            "labels": ["worker"],
+                            "backend": {"type": "swarm"},
+                        },
+                    ],
+                }
+            )
+
+    def test_cluster_different_backend_types_with_recipes_valid(self):
+        """A cluster with heterogeneous backend types is valid when translation
+        recipes cover every (source, target) pair."""
+        cluster = Cluster.model_validate(
+            {
+                "name": "mixed",
+                "hosts": [
+                    {
+                        "name": "ctrl",
+                        "uri": "10.0.0.1",
+                        "labels": ["controller"],
+                        "backend": {"type": "k0s"},
+                    },
+                    {
+                        "name": "wrk",
+                        "uri": "10.0.0.2",
+                        "labels": ["worker"],
+                        "backend": {"type": "swarm"},
+                    },
+                ],
+                "translations": [
+                    {"source": "k0s", "target": "swarm"},
+                    {"source": "swarm", "target": "k0s"},
+                ],
+            }
+        )
+        assert len(cluster.translations) == 2
+
+    def test_cluster_heterogeneous_missing_one_direction_fails(self):
+        """When only one direction of the translation recipe is provided the
+        cluster validator must still reject the definition."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="translation recipe"):
+            Cluster.model_validate(
+                {
+                    "name": "partial",
+                    "hosts": [
+                        {
+                            "name": "ctrl",
+                            "uri": "10.0.0.1",
+                            "labels": ["controller"],
+                            "backend": {"type": "k0s"},
+                        },
+                        {
+                            "name": "wrk",
+                            "uri": "10.0.0.2",
+                            "labels": ["worker"],
+                            "backend": {"type": "swarm"},
+                        },
+                    ],
+                    # Only one direction — swarm→k0s is missing.
+                    "translations": [
+                        {"source": "k0s", "target": "swarm"},
+                    ],
+                }
+            )
+
+    def test_backend_type_defaults_to_k0s(self):
+        """BackendConfig.type defaults to 'k0s' when omitted."""
+        from zcc.models.backend import BackendConfig, BackendType
+
+        cfg = BackendConfig()
+        assert cfg.type == BackendType.K0S
+
+    def test_backend_type_swarm_is_accepted(self):
+        """BackendConfig accepts 'swarm' as a valid type."""
+        from zcc.models.backend import BackendConfig, BackendType
+
+        cfg = BackendConfig.model_validate({"type": "swarm"})
+        assert cfg.type == BackendType.SWARM
+
+    def test_translation_recipe_same_type_fails(self):
+        """A TranslationRecipe whose source and target are identical must be
+        rejected — bridging a backend to itself is meaningless."""
+        from pydantic import ValidationError
+        from zcc.models.translation import TranslationRecipe
+
+        with pytest.raises(ValidationError, match="bridge two"):
+            TranslationRecipe.model_validate({"source": "k0s", "target": "k0s"})
+
+    def test_translation_recipe_valid(self):
+        """A TranslationRecipe with distinct source and target is valid."""
+        from zcc.models.translation import TranslationRecipe
+
+        recipe = TranslationRecipe.model_validate({"source": "k0s", "target": "swarm"})
+        assert recipe.source.value == "k0s"
+        assert recipe.target.value == "swarm"
+
+    def test_primary_controller_is_first_controller_host(self):
+        """primary_controller returns the first host with a controller/sole label."""
+        cluster = Cluster.model_validate(
+            {
+                "name": "t",
+                "hosts": [
+                    {"name": "wrk", "uri": "10.0.0.1", "labels": ["compute"]},
+                    {"name": "ctrl", "uri": "10.0.0.2", "labels": ["controller"]},
+                ],
+            }
+        )
+        assert cluster.primary_controller.name == "ctrl"
+
+    def test_cluster_backend_uses_primary_controller_not_hosts0(self):
+        """When the controller is not the first host, Cluster.backend still
+        returns the controller's backend config — not hosts[0]'s."""
+        cluster = Cluster.model_validate(
+            {
+                "name": "t",
+                "hosts": [
+                    # Worker listed first — no controller label.
+                    {
+                        "name": "wrk",
+                        "uri": "10.0.0.1",
+                        "labels": ["compute"],
+                        "backend": {"arguments": {"--network": "flannel"}},
+                    },
+                    # Controller listed second.
+                    {
+                        "name": "ctrl",
+                        "uri": "10.0.0.2",
+                        "labels": ["controller"],
+                        "backend": {"arguments": {"--network": "calico"}},
+                    },
+                ],
+            }
+        )
+        # cluster.backend must reflect the controller, not the worker.
+        assert cluster.backend.arguments == {"--network": "calico"}
+        assert cluster.primary_controller.name == "ctrl"
+
+    def test_cluster_backend_type_from_primary_controller(self):
+        """cluster.backend.type is the primary controller's type, not the
+        first host's type when they differ."""
+        from zcc.models.backend import BackendType
+
+        cluster = Cluster.model_validate(
+            {
+                "name": "mixed",
+                "hosts": [
+                    # Worker first with swarm type.
+                    {
+                        "name": "wrk",
+                        "uri": "10.0.0.1",
+                        "labels": ["compute"],
+                        "backend": {"type": "swarm"},
+                    },
+                    # Controller second with k0s type (the authoritative backend).
+                    {
+                        "name": "ctrl",
+                        "uri": "10.0.0.2",
+                        "labels": ["controller"],
+                        "backend": {"type": "k0s"},
+                    },
+                ],
+                "translations": [
+                    {"source": "k0s", "target": "swarm"},
+                    {"source": "swarm", "target": "k0s"},
+                ],
+            }
+        )
+        assert cluster.backend.type == BackendType.K0S
+        assert cluster.primary_controller.name == "ctrl"
+
+
+# ---------------------------------------------------------------------------
+# ClusterState / DRAFT-READY state machine
+# ---------------------------------------------------------------------------
+
+
+class TestClusterState:
+    def _draft(self) -> Cluster:
+        return Cluster.model_validate(
+            {"name": "d", "hosts": [{"name": "w", "uri": "10.0.0.1", "labels": ["gpu"]}]}
+        )
+
+    def _ready(self) -> Cluster:
+        return Cluster.model_validate(
+            {"name": "r", "hosts": [{"name": "c", "uri": "10.0.0.1", "labels": ["controller"]}]}
+        )
+
+    def test_no_controller_is_draft(self):
+        from zcc.models.state import ClusterState
+        assert self._draft().state is ClusterState.DRAFT
+
+    def test_with_controller_is_ready(self):
+        from zcc.models.state import ClusterState
+        assert self._ready().state is ClusterState.READY
+
+    def test_draft_primary_controller_is_none(self):
+        assert self._draft().primary_controller is None
+
+    def test_draft_backend_is_none(self):
+        assert self._draft().backend is None
+
+    def test_sole_label_also_ready(self):
+        from zcc.models.state import ClusterState
+        cluster = Cluster.model_validate(
+            {"name": "s", "hosts": [{"name": "n", "uri": "10.0.0.1", "labels": ["sole"]}]}
+        )
+        assert cluster.state is ClusterState.READY
+
+    def test_draft_heterogeneous_no_recipe_required(self):
+        """DRAFT clusters skip translation coverage — authoritative backend unknown."""
+        cluster = Cluster.model_validate(
+            {
+                "name": "d",
+                "hosts": [
+                    {"name": "a", "uri": "10.0.0.1", "labels": ["gpu"], "backend": {"type": "k0s"}},
+                    {"name": "b", "uri": "10.0.0.2", "labels": ["storage"], "backend": {"type": "swarm"}},
+                ],
+            }
+        )
+        from zcc.models.state import ClusterState
+        assert cluster.state is ClusterState.DRAFT
+
+    def test_deploy_raises_when_draft(self):
+        from unittest.mock import MagicMock
+        from zcc.deploy.orchestrator import DeployOrchestrator
+        from zcc.deploy.state import DeploymentPendingError
+
+        orch = DeployOrchestrator(self._draft(), backend=MagicMock())
+        with pytest.raises(DeploymentPendingError, match="DRAFT"):
+            orch.deploy()
+
+    def test_deployment_pending_error_message(self):
+        from unittest.mock import MagicMock
+        from zcc.deploy.orchestrator import DeployOrchestrator
+        from zcc.deploy.state import DeploymentPendingError
+
+        cluster = self._draft()
+        orch = DeployOrchestrator(cluster, backend=MagicMock())
+        with pytest.raises(DeploymentPendingError) as exc_info:
+            orch.deploy()
+        assert cluster.name in str(exc_info.value)
+        assert "controller" in str(exc_info.value).lower()
+
+
+# ---------------------------------------------------------------------------
+# HostState — deployment tracking field on Host
+# ---------------------------------------------------------------------------
+
+
+class TestHostState:
+    def _host(self, **kw) -> "Host":
+        data = {"name": "h", "uri": "10.0.0.1", "labels": ["controller"]}
+        data.update(kw)
+        return Host.model_validate(data)
+
+    def test_default_is_pending(self):
+        from zcc.models.state import HostState
+        assert self._host().deployment_state is HostState.PENDING
+
+    def test_deployment_state_is_mutable(self):
+        from zcc.models.state import HostState
+        host = self._host()
+        host.deployment_state = HostState.DEPLOYING
+        assert host.deployment_state is HostState.DEPLOYING
+        host.deployment_state = HostState.DEPLOYED
+        assert host.deployment_state is HostState.DEPLOYED
+
+    def test_deployment_state_excluded_from_serialization(self):
+        from zcc.models.state import HostState
+        host = self._host()
+        host.deployment_state = HostState.DEPLOYING
+        dumped = host.model_dump()
+        assert "deployment_state" not in dumped
+
+
+# ---------------------------------------------------------------------------
+# FeatureState — deployment tracking fields on Feature
+# ---------------------------------------------------------------------------
+
+
+class TestFeatureState:
+    def _feature(self) -> "Feature":
+        return Feature.model_validate({"name": "app", "labels": ["worker"]})
+
+    def test_default_state_is_pending(self):
+        from zcc.models.state import FeatureState
+        assert self._feature().deployment_state is FeatureState.PENDING
+
+    def test_deployed_to_starts_empty(self):
+        assert self._feature().deployed_to == []
+
+    def test_deployment_state_is_mutable(self):
+        from zcc.models.state import FeatureState
+        feat = self._feature()
+        feat.deployment_state = FeatureState.PARTIAL
+        assert feat.deployment_state is FeatureState.PARTIAL
+        feat.deployment_state = FeatureState.DEPLOYED
+        assert feat.deployment_state is FeatureState.DEPLOYED
+
+    def test_deployed_to_is_mutable(self):
+        feat = self._feature()
+        feat.deployed_to.append("node-1")
+        feat.deployed_to.append("node-2")
+        assert feat.deployed_to == ["node-1", "node-2"]
+
+    def test_tracking_fields_excluded_from_serialization(self):
+        from zcc.models.state import FeatureState
+        feat = self._feature()
+        feat.deployment_state = FeatureState.PARTIAL
+        feat.deployed_to.append("node-1")
+        dumped = feat.model_dump()
+        assert "deployment_state" not in dumped
+        assert "deployed_to" not in dumped
+
+
+# ---------------------------------------------------------------------------
+# ClusterState DEPLOYING / DEPLOYED — derived from resource states
+# ---------------------------------------------------------------------------
+
+
+class TestClusterStateDeploymentPhases:
+    def _cluster(self) -> "Cluster":
+        return Cluster.model_validate(
+            {
+                "name": "c",
+                "hosts": [
+                    {"name": "ctrl", "uri": "10.0.0.1", "labels": ["controller"]},
+                    {"name": "wrk", "uri": "10.0.0.2", "labels": ["worker"]},
+                ],
+                "features": [
+                    {"name": "app", "labels": ["worker"]},
+                ],
+            }
+        )
+
+    def test_fresh_cluster_with_controller_is_ready(self):
+        from zcc.models.state import ClusterState
+        assert self._cluster().state is ClusterState.READY
+
+    def test_any_host_deploying_makes_cluster_deploying(self):
+        from zcc.models.state import ClusterState, HostState
+        cluster = self._cluster()
+        cluster.hosts[0].deployment_state = HostState.DEPLOYING
+        assert cluster.state is ClusterState.DEPLOYING
+
+    def test_all_hosts_deployed_but_features_pending_is_ready(self):
+        from zcc.models.state import ClusterState, HostState
+        cluster = self._cluster()
+        for h in cluster.hosts:
+            h.deployment_state = HostState.DEPLOYED
+        assert cluster.state is ClusterState.READY
+
+    def test_all_hosts_and_features_deployed_is_deployed(self):
+        from zcc.models.state import ClusterState, FeatureState, HostState
+        cluster = self._cluster()
+        for h in cluster.hosts:
+            h.deployment_state = HostState.DEPLOYED
+        for f in cluster.features:
+            f.deployment_state = FeatureState.DEPLOYED
+        assert cluster.state is ClusterState.DEPLOYED
+
+    def test_no_features_all_hosts_deployed_is_deployed(self):
+        from zcc.models.state import ClusterState, HostState
+        cluster = Cluster.model_validate(
+            {
+                "name": "c",
+                "hosts": [
+                    {"name": "ctrl", "uri": "10.0.0.1", "labels": ["sole"]},
+                ],
+            }
+        )
+        cluster.hosts[0].deployment_state = HostState.DEPLOYED
+        assert cluster.state is ClusterState.DEPLOYED
+
+    def test_deploying_takes_precedence_over_some_deployed(self):
+        from zcc.models.state import ClusterState, HostState
+        cluster = self._cluster()
+        cluster.hosts[0].deployment_state = HostState.DEPLOYED
+        cluster.hosts[1].deployment_state = HostState.DEPLOYING
+        assert cluster.state is ClusterState.DEPLOYING
+
+    def test_draft_even_when_hosts_have_deploying_state(self):
+        """DRAFT config check wins regardless of runtime state fields."""
+        from zcc.models.state import ClusterState, HostState
+        cluster = Cluster.model_validate(
+            {
+                "name": "no-ctrl",
+                "hosts": [{"name": "w", "uri": "10.0.0.1", "labels": ["gpu"]}],
+            }
+        )
+        cluster.hosts[0].deployment_state = HostState.DEPLOYING
+        assert cluster.state is ClusterState.DRAFT

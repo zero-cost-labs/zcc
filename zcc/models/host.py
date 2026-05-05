@@ -7,6 +7,9 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from .backend import BackendConfig
+from .state import HostState
+
 # ---------------------------------------------------------------------------
 # Reserved labels understood by the framework.
 # A host must carry at least one of these so zcc knows how to install k0s.
@@ -83,6 +86,10 @@ class Host(BaseModel):
     ports: list[PortConfig] = []
     storage: list[StorageConfig] = []
     limits: list[LimitConfig] = []
+    backend: BackendConfig = Field(default_factory=BackendConfig)
+
+    # Runtime deployment tracking — excluded from serialization.
+    deployment_state: HostState = Field(default=HostState.PENDING, exclude=True)
 
     model_config = {"populate_by_name": True}
 

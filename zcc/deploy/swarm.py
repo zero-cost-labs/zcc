@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import logging
 import shlex
+from typing import TYPE_CHECKING
 
 from .backend import ClusterBackend
 from .ssh import SSHClient, SSHError
+
+if TYPE_CHECKING:
+    from ..models.backend import BackendConfig
 
 logger = logging.getLogger(__name__)
 
@@ -22,24 +26,35 @@ class DockerSwarmError(SSHError):
 
 
 class DockerSwarmBackend(ClusterBackend):
-    """
-    Installs and configures Docker Swarm on remote cluster nodes.
+    """Installs and configures Docker Swarm on remote cluster nodes.
 
-    The deployment order must be::
+    The deployment order must be:
 
     1. Install Docker Engine on every host.
-    2. Bootstrap the first manager (or standalone) node — this produces both
-       manager and worker join-tokens.
+    2. Bootstrap the first manager (or standalone) node — this produces
+       both manager and worker join-tokens.
     3. Join additional managers with the manager token.
     4. Join all worker nodes using the worker token.
 
-    The manager's advertise address is recorded during :meth:`init_controller`
-    and reused automatically by :meth:`join_controller` and
-    :meth:`join_worker`.  Both join methods must therefore be called **after**
-    :meth:`init_controller` has run at least once.
+    The manager's advertise address is recorded during
+    :meth:`init_controller` and reused automatically by
+    :meth:`join_controller` and :meth:`join_worker`.  Both join methods
+    must therefore be called **after** :meth:`init_controller` has run at
+    least once.
+
+    Parameters
+    ----------
+    config :
+        Optional :class:`~zcc.models.backend.BackendConfig` from the host
+        definition.  Reserved for future use (e.g. uploading daemon.json
+        or other Docker configuration files during :meth:`install`).
+        Currently unused beyond being stored for potential subclass access.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, config: "BackendConfig | None" = None) -> None:
+        from ..models.backend import BackendConfig as _BackendConfig
+
+        self._cfg = config if config is not None else _BackendConfig()
         self._manager_addr: str = ""
 
     # ------------------------------------------------------------------
